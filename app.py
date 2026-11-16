@@ -1,4 +1,4 @@
-import streamlit st
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -14,6 +14,15 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+if "fullscreen_section" not in st.session_state:
+    st.session_state.fullscreen_section = None
+
+def toggle_fullscreen(section_key: str):
+    if st.session_state.fullscreen_section == section_key:
+        st.session_state.fullscreen_section = None
+    else:
+        st.session_state.fullscreen_section = section_key
 
 st.markdown("""
 <style>
@@ -43,12 +52,66 @@ st.markdown("""
         margin: 10px 0 20px 0;
         text-transform: uppercase;
     }
-    /* Blinking Live Market Badge */
-    .live-badge-wrapper {
+    /* Fullscreen Mode Banner & Container Styling */
+    .fs-active-banner {
+        background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%);
+        color: #f8fafc;
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 0.95rem;
+        margin-bottom: 12px;
         display: flex;
         align-items: center;
-        justify-content: flex-end;
-        padding: 10px 20px;
+        justify-content: space-between;
+        border-left: 5px solid #22c55e;
+    }
+    .section-header-box {
+        font-size: 1.15rem;
+        font-weight: 800;
+        color: #0f172a;
+        padding-top: 4px;
+    }
+    /* Market Overview Card Styling */
+    .mkt-card {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px 14px 4px 14px;
+        box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
+        margin-bottom: 6px;
+    }
+    .mkt-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: #475569;
+        text-transform: uppercase;
+    }
+    .mkt-price {
+        font-size: 1.25rem;
+        font-weight: 800;
+        color: #0f172a;
+        margin-top: 2px;
+    }
+    .mkt-pos { color: #16a34a; font-weight: 700; font-size: 0.85rem; }
+    .mkt-neg { color: #dc2626; font-weight: 700; font-size: 0.85rem; }
+    /* Blinking Live Market Badge */
+    .top-bar-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0 12px 0;
+        border-bottom: 1px solid #e2e8f0;
+        margin-bottom: 14px;
+    }
+    .app-main-title {
+        font-size: 1.45rem;
+        font-weight: 900;
+        color: #0f172a;
+        letter-spacing: -0.3px;
     }
     .live-badge {
         display: inline-flex;
@@ -58,7 +121,7 @@ st.markdown("""
         padding: 6px 14px;
         border-radius: 20px;
         font-weight: 800;
-        font-size: 0.9rem;
+        font-size: 0.88rem;
         letter-spacing: 0.5px;
         box-shadow: 0 0 15px rgba(22, 163, 74, 0.6);
         animation: pulse 1.5s infinite;
@@ -79,6 +142,25 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+# ---------------------------------------------------------
+# MARKET OVERVIEW CONFIGURATION
+# ---------------------------------------------------------
+INDIAN_INDICES = [
+    {"name": "Nifty 50", "ticker": "^NSEI", "prefix": ""},
+    {"name": "Sensex", "ticker": "^BSESN", "prefix": ""},
+    {"name": "Bank Nifty", "ticker": "^NSEBANK", "prefix": ""},
+    {"name": "India VIX", "ticker": "^INDIAVIX", "prefix": ""}
+]
+
+GLOBAL_ASSETS = [
+    {"name": "Dow Jones", "ticker": "^DJI", "category": "US Indices", "prefix": ""},
+    {"name": "S&P 500", "ticker": "^GSPC", "category": "US Indices", "prefix": ""},
+    {"name": "Nasdaq", "ticker": "^IXIC", "category": "US Indices", "prefix": ""},
+    {"name": "Crude Oil (WTI)", "ticker": "CL=F", "category": "Commodities", "prefix": "$"},
+    {"name": "Gold", "ticker": "GC=F", "category": "Commodities", "prefix": "$"},
+    {"name": "Bitcoin", "ticker": "BTC-USD", "category": "Crypto & Forex", "prefix": "$"},
+    {"name": "USD / INR", "ticker": "INR=X", "category": "Crypto & Forex", "prefix": "₹"}
+]
 
 # ---------------------------------------------------------
 # UNIVERSE: FULL NIFTY 50 CONSTITUENTS (NSE)
@@ -103,6 +185,106 @@ TIMEFRAMES = {
     "1wk": {"interval": "1wk", "period": "2y",  "label": "Weekly"}
 }
 
+# ---------------------------------------------------------
+# MARKET OVERVIEW FETCHER & MINI CHART BUILDER
+# ---------------------------------------------------------
+def _fetch_single_index(item: dict) -> dict:
+    try:
+        df = yf.download(item["ticker"], period="5d", interval="15m", progress=False, auto_adjust=True)
+        if df is None or df.empty:
+            df = yf.download(item["ticker"], period="1mo", interval="1d", progress=False, auto_adjust=True)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df.dropna(inplace=True)
+        if len(df) < 2:
+            return None
+
+        curr = float(df["Close"].iloc[-1])
+        dates = df.index.date
+        unique_dates = pd.unique(dates)
+        if len(unique_dates) >= 2:
+            prev_day_df = df[dates == unique_dates[-2]]
+            prev_close = float(prev_day_df["Close"].iloc[-1])
+        else:
+            prev_close = float(df["Close"].iloc[0])
+
+        chg = curr - prev_close
+        chg_pct = (chg / prev_close) * 100 if prev_close != 0 else 0.0
+
+        return {
+            "name": item["name"],
+            "ticker": item["ticker"],
+            "category": item.get("category", "Indian Indices"),
+            "prefix": item.get("prefix", ""),
+            "price": curr,
+            "chg": chg,
+            "chg_pct": chg_pct,
+            "history": df["Close"].tail(60)
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_market_overview() -> dict:
+    all_items = INDIAN_INDICES + GLOBAL_ASSETS
+    results = {}
+    with ThreadPoolExecutor(max_workers=11) as executor:
+        futures = {executor.submit(_fetch_single_index, item): item["ticker"] for item in all_items}
+        for future in as_completed(futures):
+            res = future.result()
+            if res:
+                results[res["ticker"]] = res
+    return results
+
+def build_mini_sparkline(series: pd.Series, is_positive: bool, chart_height: int = 75) -> go.Figure:
+    line_color = "#16a34a" if is_positive else "#dc2626"
+    fill_color = "rgba(22, 163, 74, 0.12)" if is_positive else "rgba(220, 38, 38, 0.12)"
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=list(range(len(series))),
+        y=series.values,
+        mode="lines",
+        line=dict(color=line_color, width=2),
+        fill="tozeroy",
+        fillcolor=fill_color,
+        hovertemplate="%{y:,.2f}<extra></extra>"
+    ))
+    y_min, y_max = float(series.min()), float(series.max())
+    pad = (y_max - y_min) * 0.08 if y_max != y_min else 1.0
+    fig.update_layout(
+        height=chart_height,
+        margin=dict(l=0, r=0, t=4, b=0),
+        xaxis=dict(visible=False, fixedrange=True),
+        yaxis=dict(visible=False, range=[y_min - pad, y_max + pad], fixedrange=True),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=False,
+        hovermode="x"
+    )
+    return fig
+
+def render_market_card(col, data: dict, key_suffix: str, is_fs: bool = False):
+    with col:
+        if not data:
+            st.info("Data unavailable")
+            return
+        is_pos = data["chg"] >= 0
+        cls = "mkt-pos" if is_pos else "mkt-neg"
+        arrow = "▲" if is_pos else "▼"
+        fmt_price = f"{data['prefix']}{data['price']:,.2f}"
+        fmt_chg = f"{arrow} {data['chg']:+,.2f} ({data['chg_pct']:+.2f}%)"
+
+        st.markdown(f"""
+        <div class="mkt-card">
+            <div class="mkt-header">
+                <span>{data['name']}</span>
+                <span class="{cls}">{fmt_chg}</span>
+            </div>
+            <div class="mkt-price">{fmt_price}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        fig = build_mini_sparkline(data["history"], is_pos, chart_height=130 if is_fs else 75)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=f"spark_{data['ticker']}_{key_suffix}_{is_fs}")
 # ---------------------------------------------------------
 # TECHNICAL ENGINE (MOVING AVERAGES, INDICATORS, PIVOTS)
 # ---------------------------------------------------------
@@ -143,8 +325,8 @@ def evaluate_timeframe(df: pd.DataFrame) -> dict:
 
     rsi_series = compute_rsi(close, 14)
     rsi_val = float(rsi_series.iloc[-1])
-    if rsi_val > 55 and rsi_val < 75: rsi_act = "Buy"; ind_buy += 1
-    elif rsi_val < 45 and rsi_val > 25: rsi_act = "Sell"; ind_sell += 1
+    if 55 < rsi_val < 75: rsi_act = "Buy"; ind_buy += 1
+    elif 25 < rsi_val < 45: rsi_act = "Sell"; ind_sell += 1
     elif rsi_val <= 25: rsi_act = "Buy"; ind_buy += 1
     elif rsi_val >= 75: rsi_act = "Sell"; ind_sell += 1
     else: rsi_act = "Neutral"; ind_neut += 1
@@ -165,8 +347,8 @@ def evaluate_timeframe(df: pd.DataFrame) -> dict:
     high14 = high.rolling(14).max()
     stoch_k = 100 * (close - low14) / (high14 - low14).replace(0, np.nan)
     stoch_val = float(stoch_k.rolling(3).mean().iloc[-1])
-    if stoch_val > 50 and stoch_val < 80: st_act = "Buy"; ind_buy += 1
-    elif stoch_val < 50 and stoch_val > 20: st_act = "Sell"; ind_sell += 1
+    if 50 < stoch_val < 80: st_act = "Buy"; ind_buy += 1
+    elif 20 < stoch_val < 50: st_act = "Sell"; ind_sell += 1
     else: st_act = "Neutral"; ind_neut += 1
     ind_details.append({"Indicator": "STOCH (9,6)", "Value": round(stoch_val, 2), "Action": st_act})
 
@@ -336,91 +518,85 @@ def style_dataframe(df: pd.DataFrame):
     })
 
 # ---------------------------------------------------------
-# SIDEBAR CONTROLS
+# MODULAR SECTION RENDERERS (WITH MAXIMIZE / MINIMIZE TOGGLE)
 # ---------------------------------------------------------
-with st.sidebar:
-    st.header("Scanner Parameters")
-    primary_tf = st.selectbox("Chart & Detail Timeframe", ["1d", "1h", "15m", "1wk"], index=0)
-    view_mode = st.radio(
-        "Screener Ranking Mode",
-        ["All Scanned Equities", "Top 25 Buy Signals", "Top 25 Sell Signals"],
-        index=0
-    )
-    signal_filter = st.multiselect(
-        "Filter Master Signals",
-        ["STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"],
-        default=["STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"]
-    )
-    if st.button("Refresh Live Market Data", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
+def render_section_header(title: str, section_key: str):
+    is_fs = (st.session_state.fullscreen_section == section_key)
+    h_col, btn_col = st.columns([6, 1.4])
+    with h_col:
+        st.markdown(f'<div class="section-header-box">{title}</div>', unsafe_allow_html=True)
+    with btn_col:
+        btn_label = "🗗 Minimize" if is_fs else "⛶ Full Screen"
+        st.button(
+            btn_label,
+            key=f"btn_fs_{section_key}",
+            on_click=toggle_fullscreen,
+            args=(section_key,),
+            use_container_width=True
+        )
 
-# ---------------------------------------------------------
-# EXECUTE SCAN & COMPUTE MARKET METRICS
-# ---------------------------------------------------------
-with st.spinner("Scanning Nifty 50 with Ultra Accuracy Engine..."):
-    raw_data = scan_all_equities(NIFTY_50)
+def render_market_overview_section(is_fs: bool = False):
+    render_section_header("Market Overview — Indian Indices & Global Markets", "market_overview")
+    market_overview_data = fetch_market_overview()
 
-if not raw_data:
-    st.error("Unable to fetch live market data.")
-    st.stop()
+    st.markdown("**Indian Benchmark Indices**")
+    ind_cols = st.columns(4)
+    for idx, item in enumerate(INDIAN_INDICES):
+        render_market_card(ind_cols[idx], market_overview_data.get(item["ticker"]), f"in_{idx}", is_fs=is_fs)
 
-df_all = pd.DataFrame([{k: v for k, v in item.items() if k != "tf_data"} for item in raw_data])
-data_map = {item["Ticker"]: item for item in raw_data}
+    st.markdown("---")
+    hdr_col1, hdr_col2 = st.columns([1.2, 2.8])
+    with hdr_col1:
+        st.markdown("**Global Markets, Commodities & Crypto**")
+    with hdr_col2:
+        asset_filter = st.radio(
+            "Select Global Asset Class",
+            ["All Global Assets", "US Indices", "Commodities", "Crypto & Forex"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key=f"asset_filter_{is_fs}"
+        )
 
-strong_buy_cnt = len(df_all[df_all["Master Signal"] == "STRONG BUY"])
-buy_cnt = len(df_all[df_all["Master Signal"].isin(["STRONG BUY", "BUY"])])
-strong_sell_cnt = len(df_all[df_all["Master Signal"].isin(["STRONG SELL"])])
-sell_cnt = len(df_all[df_all["Master Signal"].isin(["STRONG SELL", "SELL"])])
-avg_rsi = round(df_all["RSI (14)"].mean(), 1)
+    filtered_global = [
+        g for g in GLOBAL_ASSETS
+        if asset_filter == "All Global Assets" or g["category"] == asset_filter
+    ]
 
-# Top Banner: Live Market Status Indicator
-st.markdown("""
-<div class="live-badge-wrapper">
-    <div class="live-badge"><span class="live-dot"></span>LIVE MARKET</div>
-</div>
-""", unsafe_allow_html=True)
+    for row_start in range(0, len(filtered_global), 4):
+        row_items = filtered_global[row_start:row_start + 4]
+        g_cols = st.columns(len(row_items))
+        for idx, item in enumerate(row_items):
+            render_market_card(g_cols[idx], market_overview_data.get(item["ticker"]), f"gl_{row_start}_{idx}", is_fs=is_fs)
 
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Scanned Equities", f"{len(df_all)} / 50")
-k2.metric("Buy Setups (Strong)", f"{buy_cnt} ({strong_buy_cnt})")
-k3.metric("Sell Setups (Strong)", f"{sell_cnt} ({strong_sell_cnt})")
-k4.metric("Avg Market RSI (14)", f"{avg_rsi}")
-
-st.markdown("---")
-
-if view_mode == "Top 25 Buy Signals":
-    df_filtered = df_all[df_all["Score"] > 0].sort_values(by="Score", ascending=False).head(25)
-elif view_mode == "Top 25 Sell Signals":
-    df_filtered = df_all[df_all["Score"] < 0].sort_values(by="Score", ascending=True).head(25)
-else:
-    df_filtered = df_all[df_all["Master Signal"].isin(signal_filter)].sort_values(by="Score", ascending=False)
-
-# ---------------------------------------------------------
-# MAIN WORKSPACE: LEFT SCREENER TABLE | RIGHT INVESTING.COM PANEL
-# ---------------------------------------------------------
-left_col, right_col = st.columns([1.2, 1.4], gap="large")
-
-with left_col:
-    st.subheader(f"Scanner Results ({len(df_filtered)})")
+def render_screener_section(df_filtered: pd.DataFrame, is_fs: bool = False):
+    render_section_header(f"Scanner Results ({len(df_filtered)} Equities)", "screener_table")
     display_cols = ["Ticker", "Close", "Chg %", "RSI (14)", "15m", "1h", "1d", "1wk", "Master Signal", "Score"]
+    if is_fs:
+        display_cols = ["Ticker", "Close", "Chg %", "RSI (14)", "15m", "1h", "1d", "1wk", "Master Signal", "Score", "Stop Loss", "Target"]
     st.dataframe(
         style_dataframe(df_filtered[display_cols]),
         use_container_width=True,
-        height=650,
+        height=780 if is_fs else 650,
         hide_index=True
     )
 
-with right_col:
+def render_matrix_and_chart_section(df_filtered: pd.DataFrame, df_all: pd.DataFrame, data_map: dict, primary_tf: str, is_fs: bool = False):
+    render_section_header("Multi-Timeframe Confluence Matrix & Technical Chart", "confluence_matrix")
+
     ticker_options = df_filtered["Ticker"].tolist() if not df_filtered.empty else df_all["Ticker"].tolist()
-    selected_ticker = st.selectbox("Select Equity for Deep Technical Analysis", ticker_options, index=0)
+    selected_ticker = st.selectbox(
+        "Select Equity for Deep Technical Analysis",
+        ticker_options,
+        index=0,
+        key=f"ticker_select_{is_fs}"
+    )
     stock_obj = data_map[selected_ticker]
     tf_dict = stock_obj["tf_data"]
     active_tf_data = tf_dict.get(primary_tf, tf_dict["1d"])
 
     st.markdown(f"### {selected_ticker} — ₹{stock_obj['Close']:.2f} ({stock_obj['Chg %']:+.2f}%)")
 
-    # 1. MULTI-TIMEFRAME ALIGNMENT CARDS
+    # 1. MULTI-TIMEFRAME ALIGNMENT CARDS (MATRIX)
     tf_cols = st.columns(4)
     for idx, (tf_k, tf_meta) in enumerate(TIMEFRAMES.items()):
         sig_txt = tf_dict[tf_k]["signal"] if tf_k in tf_dict else "N/A"
@@ -470,58 +646,52 @@ with right_col:
         st.dataframe(active_tf_data["pivots"], use_container_width=True, hide_index=True)
 
     with tab_chart:
-        plot_df = active_tf_data["df"].tail(80)
-        
-        # Investing.com Style Subplots: Price Chart (70%) + Volume Bars (30%)
+        plot_df = active_tf_data["df"].tail(120 if is_fs else 80)
+
         fig = make_subplots(
-            rows=2, cols=1, 
-            shared_xaxes=True, 
-            vertical_spacing=0.03, 
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.03,
             row_heights=[0.70, 0.30]
         )
 
-        # Price Candlesticks
         fig.add_trace(go.Candlestick(
-            x=plot_df.index, 
-            open=plot_df["Open"], 
-            high=plot_df["High"], 
-            low=plot_df["Low"], 
+            x=plot_df.index,
+            open=plot_df["Open"],
+            high=plot_df["High"],
+            low=plot_df["Low"],
             close=plot_df["Close"],
-            name="Price", 
-            increasing_line_color="#16a34a", 
+            name="Price",
+            increasing_line_color="#16a34a",
             decreasing_line_color="#dc2626"
         ), row=1, col=1)
 
-        # Bollinger Bands
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["BB_Upper"], line=dict(color="rgba(59,130,246,0.3)", width=1), name="BB Upper"), row=1, col=1)
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["BB_Mid"], line=dict(color="#f59e0b", width=1.2), name="20 SMA"), row=1, col=1)
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["BB_Lower"], line=dict(color="rgba(59,130,246,0.3)", width=1), fill="tonexty", fillcolor="rgba(59,130,246,0.04)", name="BB Lower"), row=1, col=1)
 
-        # Volume Bars Colored by Price Action
         vol_colors = ["#16a34a" if row["Close"] >= row["Open"] else "#dc2626" for _, row in plot_df.iterrows()]
         fig.add_trace(go.Bar(
-            x=plot_df.index, 
-            y=plot_df["Volume"], 
+            x=plot_df.index,
+            y=plot_df["Volume"],
             marker_color=vol_colors,
             name="Volume",
             opacity=0.6
         ), row=2, col=1)
 
-        # Persistent Layout Configuration Prevent Disappearances
         fig.update_layout(
-            height=520, 
-            margin=dict(l=10, r=10, t=10, b=10), 
+            height=680 if is_fs else 520,
+            margin=dict(l=10, r=10, t=10, b=10),
             xaxis_rangeslider_visible=False,
             template="plotly_white",
             showlegend=False,
             hovermode="x unified"
         )
-        
-        # Ensure Axes remain locked and responsive
+
         fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0")
         fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0")
 
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'responsive': True})
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True, "responsive": True}, key=f"main_chart_{selected_ticker}_{primary_tf}_{is_fs}")
 
     with tab_details:
         c_ma, c_ind = st.columns(2)
@@ -531,3 +701,115 @@ with right_col:
         with c_ind:
             st.markdown("**Oscillators & Trend Detail**")
             st.dataframe(active_tf_data["ind_details"], use_container_width=True, hide_index=True)
+
+# ---------------------------------------------------------
+# SIDEBAR CONTROLS
+# ---------------------------------------------------------
+with st.sidebar:
+    st.header("Scanner Parameters")
+    primary_tf = st.selectbox("Chart & Detail Timeframe", ["1d", "1h", "15m", "1wk"], index=0)
+    view_mode = st.radio(
+        "Screener Ranking Mode",
+        ["All Scanned Equities", "Top 25 Buy Signals", "Top 25 Sell Signals"],
+        index=0
+    )
+    signal_filter = st.multiselect(
+        "Filter Master Signals",
+        ["STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"],
+        default=["STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"]
+    )
+    st.markdown("---")
+    st.markdown("**Quick View Layout**")
+    if st.session_state.fullscreen_section is not None:
+        st.button("🗗 Exit Full Screen Mode", on_click=toggle_fullscreen, args=(st.session_state.fullscreen_section,), use_container_width=True)
+    if st.button("Refresh Live Market Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+# ---------------------------------------------------------
+# TOP HEADER & BLINKING LIVE MARKET BADGE
+# ---------------------------------------------------------
+st.markdown("""
+<div class="top-bar-container">
+    <div class="app-main-title">ULTRA ACCURACY MARKET TERMINAL</div>
+    <div class="live-badge"><span class="live-dot"></span>LIVE MARKET</div>
+</div>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# EXECUTE NIFTY 50 SCAN & COMPUTE MARKET METRICS
+# ---------------------------------------------------------
+with st.spinner("Scanning Nifty 50 with Ultra Accuracy Engine..."):
+    raw_data = scan_all_equities(NIFTY_50)
+
+if not raw_data:
+    st.error("Unable to fetch live market data.")
+    st.stop()
+
+df_all = pd.DataFrame([{k: v for k, v in item.items() if k != "tf_data"} for item in raw_data])
+data_map = {item["Ticker"]: item for item in raw_data}
+
+if view_mode == "Top 25 Buy Signals":
+    df_filtered = df_all[df_all["Score"] > 0].sort_values(by="Score", ascending=False).head(25)
+elif view_mode == "Top 25 Sell Signals":
+    df_filtered = df_all[df_all["Score"] < 0].sort_values(by="Score", ascending=True).head(25)
+else:
+    df_filtered = df_all[df_all["Master Signal"].isin(signal_filter)].sort_values(by="Score", ascending=False)
+
+# ---------------------------------------------------------
+# ROUTING: FULL-SCREEN EXPANDED VIEW VS STANDARD DASHBOARD
+# ---------------------------------------------------------
+active_fs = st.session_state.fullscreen_section
+
+if active_fs is not None:
+    fs_labels = {
+        "market_overview": "MARKET OVERVIEW",
+        "screener_table": "SCANNER RESULTS TABLE",
+        "confluence_matrix": "MULTI-TIMEFRAME CONFLUENCE MATRIX & CHART"
+    }
+    st.markdown(f"""
+    <div class="fs-active-banner">
+        <span>FULL SCREEN MODE ACTIVE: {fs_labels.get(active_fs, '')}</span>
+        <span>Click 'Minimize' to restore full dashboard layout</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if active_fs == "market_overview":
+        render_market_overview_section(is_fs=True)
+    elif active_fs == "screener_table":
+        render_screener_section(df_filtered, is_fs=True)
+    elif active_fs == "confluence_matrix":
+        render_matrix_and_chart_section(df_filtered, df_all, data_map, primary_tf, is_fs=True)
+
+else:
+    # 1. MARKET OVERVIEW SECTION
+    with st.container(border=True):
+        render_market_overview_section(is_fs=False)
+
+    st.markdown("---")
+
+    # 2. KPI SUMMARY METRICS
+    strong_buy_cnt = len(df_all[df_all["Master Signal"] == "STRONG BUY"])
+    buy_cnt = len(df_all[df_all["Master Signal"].isin(["STRONG BUY", "BUY"])])
+    strong_sell_cnt = len(df_all[df_all["Master Signal"].isin(["STRONG SELL"])])
+    sell_cnt = len(df_all[df_all["Master Signal"].isin(["STRONG SELL", "SELL"])])
+    avg_rsi = round(df_all["RSI (14)"].mean(), 1)
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Scanned Equities", f"{len(df_all)} / 50")
+    k2.metric("Buy Setups (Strong)", f"{buy_cnt} ({strong_buy_cnt})")
+    k3.metric("Sell Setups (Strong)", f"{sell_cnt} ({strong_sell_cnt})")
+    k4.metric("Avg Market RSI (14)", f"{avg_rsi}")
+
+    st.markdown("---")
+
+    # 3. MAIN WORKSPACE: LEFT SCREENER TABLE | RIGHT MATRIX & CHART PANEL
+    left_col, right_col = st.columns([1.2, 1.4], gap="large")
+
+    with left_col:
+        with st.container(border=True):
+            render_screener_section(df_filtered, is_fs=False)
+
+    with right_col:
+        with st.container(border=True):
+            render_matrix_and_chart_section(df_filtered, df_all, data_map, primary_tf, is_fs=False)
