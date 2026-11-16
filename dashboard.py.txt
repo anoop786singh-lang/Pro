@@ -1,0 +1,78 @@
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+from config.settings import settings
+from data.pipeline import pipeline
+from data.database import db_manager
+from engine.indicators import quant_engine
+import sqlite3
+
+def run_dashboard():
+    st.set_page_config(layout="wide", page_title=settings.PROJECT_NAME)
+    
+    st.markdown("""
+        <style>
+        .main { background-color: #0c0e15; color: #e0e0e0; }
+        .stTabs [data-baseweb="tab-list"] { gap: 16px; }
+        .stTabs [data-baseweb="tab"] { background-color: #161b22; border-radius: 6px; color: #c9d1d9; font-weight: 600; }
+        .stTabs [aria-selected="true"] { background-color: #1f6feb !important; color: white !important; }
+        .metric-card { background-color: #161b22; padding: 15px; border-radius: 8px; border: 1px solid #30363d; text-align: center; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    if "sym" not in st.session_state: st.session_state.sym = "^NSEI"
+    if "lbl" not in st.session_state: st.session_state.lbl = "NIFTY"
+
+    with st.sidebar:
+        st.header("Navigation")
+        for item in settings.CORE_WATCHLIST:
+            if st.button(f"{item['label']} ({item['category']})", use_container_width=True):
+                st.session_state.sym = item["symbol"]
+                st.session_state.lbl = item["label"]
+                st.rerun()
+        
+        st.markdown("<hr>", unsafe_allow_html=True)
+        if st.button("Force Sync Cache", type="primary", use_container_width=True):
+            with st.spinner("Syncing data..."):
+                pipeline.fetch_and_store(st.session_state.sym, period="60d", interval="1h")
+            st.rerun()
+
+    # Data Sync and Fetch
+    pipeline.fetch_and_store(st.session_state.sym, period="60d", interval="1h")
+    raw_df = pd.DataFrame()
+    try:
+        with sqlite3.connect(settings.DB_PATH) as conn:
+            query = f"SELECT timestamp, open, high, low, close, volume FROM historical_bars WHERE symbol='{st.session_state.sym}' ORDER BY timestamp ASC"
+            raw_df = pd.read_sql_query(query, conn, parse_dates=['timestamp'], index_col='timestamp')
+    except Exception as e:
+        st.error(f"Database error: {e}")
+
+    if raw_df.empty:
+        st.warning("No data available.")
+        return
+
+    df = quant_engine.compute_indicators(raw_df)
+    signal = quant_engine.generate_signals(df)
+
+    last = df.iloc[-1]
+    c, sma, upper, lower, rsi = float(last['close']), float(last['SMA20']), float(last['BB_Upper']), float(last['BB_Lower']), float(last['RSI'])
+
+    st.title(f"Terminal: {st.session_state.lbl}")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("CMP", f"₹{c:,.2f}")
+    col2.markdown(f"<div class='metric-card'><div>Signal</div><br><b>{signal}</b></div>", unsafe_allow_html=True)
+    col3.metric("RSI (14)", f"{rsi:.2f}")
+    col4.metric("20 SMA", f"₹{sma:,.2f}")
+
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'], name="Price"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA20'], line=dict(color='#1f6feb', width=2), name="20 SMA"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], line=dict(color='rgba(255,255,255,0.5)', width=1, dash='dot'), name="BB Upper"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], line=dict(color='rgba(255,255,255,0.5)', width=1, dash='dot'), fill='tonexty', name="BB Lower"))
+
+    fig.update_layout(height=600, template="plotly_dark", yaxis=dict(side="right"), xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig, use_container_width=True)
+
+if __name__ == "__main__":
+    run_dashboard()
