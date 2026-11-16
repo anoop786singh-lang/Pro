@@ -203,12 +203,14 @@ def calculate_dynamic_trade_levels(df: pd.DataFrame, bias_score: float) -> dict:
     }
 
 def detect_support_resistance(df: pd.DataFrame, lookback: int = 80, order: int = 4) -> dict:
+    close = float(df["Close"].iloc[-1]) if not df.empty else 100.0
+    def_supp = round(close * 0.98, 2)
+    def_res = round(close * 1.02, 2)
+
     if df.empty or len(df) < order * 2 + 5:
-        close = float(df["Close"].iloc[-1]) if not df.empty else 100.0
-        return {"support": round(close * 0.98, 2), "resistance": round(close * 1.02, 2), "s_strength": 1, "r_strength": 1}
+        return {"support": def_supp, "resistance": def_res, "s_strength": 1, "r_strength": 1}
 
     sub = df.tail(lookback).copy()
-    close = float(sub["Close"].iloc[-1])
     atr = float(sub["ATR"].iloc[-1]) if ("ATR" in sub.columns and not np.isnan(sub["ATR"].iloc[-1])) else close * 0.015
     tol = max(atr * 0.6, close * 0.004)
 
@@ -231,16 +233,21 @@ def detect_support_resistance(df: pd.DataFrame, lookback: int = 80, order: int =
     res_clusters = [c for c in cluster_levels(pivot_highs) if c[0] > close * 0.998]
     sup_clusters = [c for c in cluster_levels(pivot_lows) if c[0] < close * 1.002]
 
-    nearest_r = float(sub["High"].max()) if not res_clusters else min(res_clusters, key=lambda x: abs(x[0] - close))[0]
-    r_str = 1 if not res_clusters else min(res_clusters, key=lambda x: abs(x[0] - close))[1]
+    nearest_r = def_res
+    r_str = 1
+    if res_clusters:
+        best_r = min(res_clusters, key=lambda x: abs(x[0] - close))
+        nearest_r = round(float(best_r[0]), 2)
+        r_str = int(best_r[1])
 
-    nearest_s = float(sub["Low"].min()) if not sup_clusters else min(sup_clusters, key=lambda x: abs(close - x[0]))
-    s_str = 1 if not sup_clusters else min(sup_clusters, key=lambda x: abs(close - x[0]))[1]
+    nearest_s = def_supp
+    s_str = 1
+    if sup_clusters:
+        best_s = min(sup_clusters, key=lambda x: abs(close - x[0]))
+        nearest_s = round(float(best_s[0]), 2)
+        s_str = int(best_s[1])
 
-    nearest_r = close * 1.02 if np.isnan(nearest_r) else nearest_r
-    nearest_s = close * 0.98 if np.isnan(nearest_s) else nearest_s
-
-    return {"support": round(nearest_s, 2), "resistance": round(nearest_r, 2), "s_strength": s_str, "r_strength": r_str}
+    return {"support": nearest_s, "resistance": nearest_r, "s_strength": s_str, "r_strength": r_str}
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
     if df.empty or len(df) < 4: return {"name": "None", "bias": 0, "short": "—"}
