@@ -6,7 +6,40 @@ from core.data_fetcher import fetch_all_timeframes
 from core.signal_engine import compute_master_and_risk, evaluate_timeframe
 from settings import settings
 
-st.set_page_config(page_title=settings.PROJECT_NAME, layout="wide")
+st.set_page_config(
+    page_title=settings.PROJECT_NAME,
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# Custom CSS to eliminate Streamlit default chrome glitches, bottom black overlay artifacts,
+# and maximize chart viewport cleanly like TradingView
+st.markdown(
+    """
+    <style>
+        .block-container {
+            padding-top: 1.2rem !important;
+            padding-bottom: 1.5rem !important;
+            padding-left: 1.5rem !important;
+            padding-right: 1.5rem !important;
+            max-width: 100% !important;
+        }
+        /* Hide Streamlit footer & manage app overlay glitches if present */
+        footer {visibility: hidden;}
+        #MainMenu {visibility: hidden;}
+        div[data-testid="stToolbar"] {visibility: hidden;}
+        .stDeployButton {display:none;}
+        /* Compact inline header bar */
+        div[data-testid="stMetricValue"] {
+            font-size: 1.35rem !important;
+        }
+        div[data-testid="stMetricLabel"] {
+            font-size: 0.8rem !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def style_signal_cell(val: str) -> str:
@@ -22,10 +55,39 @@ def style_signal_cell(val: str) -> str:
     return "background-color: #2b3035; color: #adb5bd;"
 
 
+def ensure_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2.0) -> pd.DataFrame:
+    """Guarantees BB_UPPER, BB_MID, BB_LOWER exist on df even if upstream evaluator omitted them."""
+    out = df.copy()
+    if out.empty or "Close" not in out.columns:
+        return out
+    if not {"BB_UPPER", "BB_MID", "BB_LOWER"}.issubset(out.columns):
+        mid = out["Close"].rolling(window=period, min_periods=1).mean()
+        std = out["Close"].rolling(window=period, min_periods=1).std().fillna(0.0)
+        out["BB_MID"] = mid
+        out["BB_UPPER"] = mid + (std_dev * std)
+        out["BB_LOWER"] = mid - (std_dev * std)
+    return out
+
+
+def ensure_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+    """Guarantees RSI column exists on df."""
+    out = df.copy()
+    if out.empty or "Close" not in out.columns:
+        return out
+    if "RSI" not in out.columns or out["RSI"].isna().all():
+        delta = out["Close"].diff()
+        gain = delta.clip(lower=0).rolling(window=period, min_periods=1).mean()
+        loss = (-delta.clip(upper=0)).rolling(window=period, min_periods=1).mean()
+        rs = gain / loss.replace(0, 1e-9)
+        out["RSI"] = 100.0 - (100.0 / (1.0 + rs))
+    return out
+
+
 def evaluate_bb_and_breakout_confluence(
     df: pd.DataFrame, master_signal: str
 ) -> tuple[bool, str, str]:
-    if df.empty or len(df) < 25 or "BB_UPPER" not in df.columns:
+    df = ensure_bollinger_bands(ensure_rsi(df))
+    if df.empty or len(df) < 25:
         return False, "N/A", "None"
 
     row = df.iloc[-1]
@@ -47,37 +109,25 @@ def evaluate_bb_and_breakout_confluence(
     qualified = False
 
     if is_bull:
-        if close > bb_upper or (
-            prev["Close"] <= prev["BB_MID"] and close > bb_mid
-        ):
-            bb_status = (
-                "Upper Band Breakout" if close > bb_upper else "Mid-BB Reclaim"
-            )
+        if close > bb_upper or (prev["Close"] <= prev["BB_MID"] and close > bb_mid):
+            bb_status = "Upper Band Breakout" if close > bb_upper else "Mid-BB Reclaim"
         if close > recent_high:
             breakout_status = "20-Bar Resistance Breakout"
         elif close > prev["High"] and row["Close"] > row["Open"]:
             breakout_status = "Bullish Candle Breakout"
 
-        if (52 <= rsi <= 75) and (
-            bb_status != "Inside Bands" or "Breakout" in breakout_status
-        ):
+        if (52 <= rsi <= 75) and (bb_status != "Inside Bands" or "Breakout" in breakout_status):
             qualified = True
 
     elif is_bear:
-        if close < bb_lower or (
-            prev["Close"] >= prev["BB_MID"] and close < bb_mid
-        ):
-            bb_status = (
-                "Lower Band Breakdown" if close < bb_lower else "Mid-BB Rejection"
-            )
+        if close < bb_lower or (prev["Close"] >= prev["BB_MID"] and close < bb_mid):
+            bb_status = "Lower Band Breakdown" if close < bb_lower else "Mid-BB Rejection"
         if close < recent_low:
             breakout_status = "20-Bar Support Breakdown"
         elif close < prev["Low"] and row["Close"] < row["Open"]:
             breakout_status = "Bearish Candle Breakdown"
 
-        if (25 <= rsi <= 48) and (
-            bb_status != "Inside Bands" or "Breakdown" in breakout_status
-        ):
+        if (25 <= rsi <= 48) and (bb_status != "Inside Bands" or "Breakdown" in breakout_status):
             qualified = True
 
     return qualified, bb_status, breakout_status
@@ -102,9 +152,7 @@ def run_scanner_universe(exec_tf: str) -> pd.DataFrame:
             continue
 
         exec_df = mtf_res[exec_tf]["df"]
-        qualified, bb_stat, bo_stat = evaluate_bb_and_breakout_confluence(
-            exec_df, m_sig
-        )
+        qualified, bb_stat, bo_stat = evaluate_bb_and_breakout_confluence(exec_df, m_sig)
         if not qualified:
             continue
 
@@ -138,12 +186,10 @@ def run_scanner_universe(exec_tf: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     df_scan = pd.DataFrame(rows)
-    return df_scan.sort_values(by="Conf %", ascending=False).reset_index(
-        drop=True
-    )
+    return df_scan.sort_values(by="Conf %", ascending=False).reset_index(drop=True)
 
 
-# --- INITIALIZE SESSION STATE ---
+# --- SESSION STATE INITIALIZATION ---
 if "active_symbol" not in st.session_state:
     st.session_state.active_symbol = settings.CORE_WATCHLIST[0]["symbol"]
 if "active_tf" not in st.session_state:
@@ -159,178 +205,87 @@ if "show_bb" not in st.session_state:
 if "show_levels" not in st.session_state:
     st.session_state.show_levels = True
 
-# --- SIDEBAR (Global Defaults) ---
+# --- SIDEBAR (Risk & Capital Config) ---
 st.sidebar.title(f"{settings.PROJECT_NAME} v{settings.VERSION}")
-capital = st.sidebar.number_input(
-    "Trading Capital (INR)", value=settings.INITIAL_CAPITAL
-)
-risk_pct = st.sidebar.slider(
-    "Max Risk Per Trade (%)", 0.5, 5.0, settings.MAX_RISK_PER_TRADE_PCT
-)
+capital = st.sidebar.number_input("Trading Capital (INR)", value=settings.INITIAL_CAPITAL)
+risk_pct = st.sidebar.slider("Max Risk Per Trade (%)", 0.5, 5.0, settings.MAX_RISK_PER_TRADE_PCT)
 
-# Fetch Data safely handling suffix
+# --- FETCH DATA ---
 raw_data = fetch_all_timeframes(st.session_state.active_symbol)
-mtf_results = {tf: evaluate_timeframe(df) for tf, df in raw_data.items()}
-
 if not raw_data or all(df.empty for df in raw_data.values()):
-    st.error(
-        f"Unable to fetch data for ticker: {st.session_state.active_symbol}."
-    )
+    st.error(f"Unable to fetch market data for ticker: {st.session_state.active_symbol}")
     st.stop()
 
-master = compute_master_and_risk(
-    mtf_results, st.session_state.active_tf, capital, risk_pct
+mtf_results = {tf: evaluate_timeframe(df) for tf, df in raw_data.items()}
+master = compute_master_and_risk(mtf_results, st.session_state.active_tf, capital, risk_pct)
+
+# Prepare active dataframe with guaranteed BB & RSI columns
+chart_source_df = ensure_bollinger_bands(
+    ensure_rsi(mtf_results[st.session_state.active_tf]["df"])
 )
 
-# --- TRADINGVIEW STYLE TOP CONTROL BAR ---
-st.markdown("### Active Instrument & View")
-top_c1, top_c2, top_c3, top_c4 = st.columns([2, 1.5, 2.5, 4])
+# --- TRADINGVIEW-STYLE INLINE TOP HEADER BAR ---
+# Row 1: Ticker Selector | Timeframe Pills/Select | LTP | Master Signal
+hdr_c1, hdr_c2, hdr_c3, hdr_c4 = st.columns([2.2, 2.8, 1.8, 2.2])
 
-with top_c1:
+with hdr_c1:
     display_watch = {
-        item["symbol"].replace(".NS", ""): item["symbol"]
+        f"{item['label']} ({item['symbol'].replace('.NS', '')})": item["symbol"]
         for item in settings.CORE_WATCHLIST
     }
-    selected_disp = st.selectbox(
-        "Switch Ticker",
+    sym_values = list(display_watch.values())
+    curr_idx = sym_values.index(st.session_state.active_symbol) if st.session_state.active_symbol in sym_values else 0
+    selected_label = st.selectbox(
+        "Instrument",
         options=list(display_watch.keys()),
-        index=list(display_watch.values()).index(
-            st.session_state.active_symbol
-        ),
+        index=curr_idx,
+        label_visibility="collapsed",
     )
-    if display_watch[selected_disp] != st.session_state.active_symbol:
-        st.session_state.active_symbol = display_watch[selected_disp]
+    if display_watch[selected_label] != st.session_state.active_symbol:
+        st.session_state.active_symbol = display_watch[selected_label]
         st.rerun()
 
-with top_c2:
-    inline_tf = st.selectbox(
-        "Timeframe",
-        list(settings.TIMEFRAMES.keys()),
-        index=list(settings.TIMEFRAMES.keys()).index(
-            st.session_state.active_tf
-        ),
-    )
-    if inline_tf != st.session_state.active_tf:
-        st.session_state.active_tf = inline_tf
-        st.rerun()
+with hdr_c2:
+    tf_keys = ["15M", "1H", "1D", "1WK"]
+    available_tfs = [tf for tf in tf_keys if tf in settings.TIMEFRAMES] or list(settings.TIMEFRAMES.keys())
+    tf_cols = st.columns(len(available_tfs))
+    for i, tf in enumerate(available_tfs):
+        btn_type = "primary" if st.session_state.active_tf == tf else "secondary"
+        if tf_cols[i].button(tf, key=f"top_tf_{tf}", type=btn_type, use_container_width=True):
+            st.session_state.active_tf = tf
+            st.rerun()
 
-with top_c3:
-    st.metric("LTP", f"{master['entry']:,.2f}")
-
-with top_c4:
+with hdr_c3:
+    latest_close = float(chart_source_df["Close"].iloc[-1]) if not chart_source_df.empty else master["entry"]
+    prev_close = float(chart_source_df["Close"].iloc[-2]) if len(chart_source_df) > 1 else latest_close
+    pct_chg = ((latest_close - prev_close) / prev_close * 100.0) if prev_close else 0.0
     st.metric(
-        "Master Signal",
-        master["master_signal"],
+        label=f"{st.session_state.active_symbol.replace('.NS', '')} · {st.session_state.active_tf}",
+        value=f"{latest_close:,.2f}",
+        delta=f"{pct_chg:+.2f}%",
+    )
+
+with hdr_c4:
+    st.metric(
+        label="Signal",
+        value=master["master_signal"],
         delta=f"{master['confidence_score']}% Conf",
     )
 
-st.divider()
+# Row 2: Inline Instant Indicator & Overlay Toggles directly above the chart canvas
+tog_c1, tog_c2, tog_c3, tog_c4, tog_c5, _ = st.columns([1.1, 1.2, 1.2, 1.5, 1.2, 3.8])
+with tog_c1:
+    st.session_state.panel_price = st.toggle("Price", value=st.session_state.panel_price, key="tog_price")
+with tog_c2:
+    st.session_state.panel_volume = st.toggle("Volume", value=st.session_state.panel_volume, key="tog_vol")
+with tog_c3:
+    st.session_state.panel_rsi = st.toggle("RSI (14)", value=st.session_state.panel_rsi, key="tog_rsi")
+with tog_c4:
+    st.session_state.show_bb = st.toggle("BB (20, 2)", value=st.session_state.show_bb, key="tog_bb")
+with tog_c5:
+    st.session_state.show_levels = st.toggle("Levels", value=st.session_state.show_levels, key="tog_lvl")
 
-# --- SCANNER SECTION (Tabs Dock) ---
-st.subheader("Market Intelligence & Scanner")
-scan_tab1, scan_tab2, scan_tab3 = st.tabs(
-    ["Scanner", "MTF Signal Matrix", "Risk & Positions"]
-)
-
-with scan_tab1:
-    scanner_df = run_scanner_universe(st.session_state.active_tf)
-    sig_cols = ["Master Signal", "1WK", "1D", "1H", "15M"]
-    if scanner_df.empty:
-        st.info("No high-accuracy confluence candidates found.")
-    else:
-        compact_cols = [
-            "Stock",
-            "LTP",
-            "Master Signal",
-            "Conf %",
-            "1D",
-            "1H",
-            "15M",
-            "RSI",
-            "BB Status",
-            "Trigger / Pattern",
-        ]
-        st.dataframe(
-            scanner_df[compact_cols].head(5).style.map(
-                style_signal_cell, subset=["Master Signal", "1D", "1H", "15M"]
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-        with st.expander(
-            f"Expand Full Scanner Matrix ({len(scanner_df)} Symbols)",
-            expanded=False,
-        ):
-            st.dataframe(
-                scanner_df.style.map(style_signal_cell, subset=sig_cols),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-with scan_tab2:
-    matrix_rows = []
-    for tf, res in mtf_results.items():
-        pat_name = (
-            res["patterns"][0]["pattern"] if res["patterns"] else "-"
-        )
-        matrix_rows.append(
-            {
-                "Timeframe": tf,
-                "Signal": res["signal"],
-                "Confidence": f"{res['confidence']}%",
-                "Score": res["score"],
-                "RSI": res["rsi"],
-                "Pattern": pat_name,
-            }
-        )
-    matrix_df = pd.DataFrame(matrix_rows)
-    st.dataframe(
-        matrix_df.style.map(style_signal_cell, subset=["Signal"]),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-with scan_tab3:
-    levels_df = pd.DataFrame(
-        [
-            {"Level": "Entry Price", "Price": master["entry"]},
-            {"Level": "Stop Loss", "Price": master["stop_loss"]},
-            {"Level": "Target 1", "Price": master["target_1"]},
-            {"Level": "Target 2", "Price": master["target_2"]},
-            {"Level": "Target 3", "Price": master["target_3"]},
-        ]
-    )
-    st.dataframe(levels_df, use_container_width=True, hide_index=True)
-
-st.divider()
-
-# --- DYNAMIC CHART CANVAS ---
-st.markdown("### Chart Viewport")
-
-ctrl_c1, ctrl_c2, ctrl_c3, ctrl_c4, ctrl_c5, _ = st.columns(
-    [1, 1, 1.2, 1, 1.5, 4]
-)
-with ctrl_c1:
-    st.session_state.panel_price = st.checkbox(
-        "Price", value=st.session_state.panel_price
-    )
-with ctrl_c2:
-    st.session_state.panel_volume = st.checkbox(
-        "Volume", value=st.session_state.panel_volume
-    )
-with ctrl_c3:
-    st.session_state.panel_rsi = st.checkbox(
-        "RSI (14)", value=st.session_state.panel_rsi
-    )
-with ctrl_c4:
-    st.session_state.show_bb = st.checkbox(
-        "BB", value=st.session_state.show_bb
-    )
-with ctrl_c5:
-    st.session_state.show_levels = st.checkbox(
-        "Levels", value=st.session_state.show_levels
-    )
-
+# --- DYNAMIC SUBPLOT ENGINE (Unchecked panels completely omitted so active panels fill 100% height) ---
 active_panels = []
 if st.session_state.panel_price:
     active_panels.append("price")
@@ -340,27 +295,24 @@ if st.session_state.panel_rsi:
     active_panels.append("rsi")
 
 if not active_panels:
-    st.warning("All panels disabled. Enable at least one panel above.")
+    st.warning("All chart panels are disabled. Enable Price, Volume, or RSI above.")
 else:
-    chart_df = mtf_results[st.session_state.active_tf]["df"].tail(180).copy()
-    fmt_str = (
-        "%d %b %H:%M"
-        if st.session_state.active_tf in ["15M", "1H"]
-        else "%d %b %Y"
-    )
+    chart_df = chart_source_df.tail(180).copy()
+    fmt_str = "%d %b %H:%M" if st.session_state.active_tf in ["15M", "1H"] else "%d %b '%y"
     x_labels = chart_df.index.strftime(fmt_str)
 
-    weight_map = {"price": 0.65, "volume": 0.16, "rsi": 0.19}
+    # Dynamic height & proportional row allocation
+    weight_map = {"price": 0.68, "volume": 0.15, "rsi": 0.17}
     raw_weights = [weight_map[p] for p in active_panels]
-    total_w = sum(raw_weights)
-    row_heights = [w / total_w for w in raw_weights]
+    total_weight = sum(raw_weights)
+    row_heights = [w / total_weight for w in raw_weights]
     rows_count = len(active_panels)
 
     fig = make_subplots(
         rows=rows_count,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.035 if rows_count > 1 else 0.0,
+        vertical_spacing=0.025 if rows_count > 1 else 0.0,
         row_heights=row_heights,
     )
 
@@ -373,14 +325,8 @@ else:
                     high=chart_df["High"],
                     low=chart_df["Low"],
                     close=chart_df["Close"],
-                    increasing=dict(
-                        line=dict(color="#26a69a", width=1.2),
-                        fillcolor="#26a69a",
-                    ),
-                    decreasing=dict(
-                        line=dict(color="#ef5350", width=1.2),
-                        fillcolor="#ef5350",
-                    ),
+                    increasing=dict(line=dict(color="#089981", width=1.2), fillcolor="#089981"),
+                    decreasing=dict(line=dict(color="#f23645", width=1.2), fillcolor="#f23645"),
                     whiskerwidth=0.4,
                     name="Price",
                     showlegend=False,
@@ -389,18 +335,15 @@ else:
                 col=1,
             )
 
-            if (
-                st.session_state.show_bb
-                and "BB_UPPER" in chart_df.columns
-            ):
+            # Bollinger Bands (20, 2) - TradingView Light Theme Styling
+            if st.session_state.show_bb and {"BB_UPPER", "BB_MID", "BB_LOWER"}.issubset(chart_df.columns):
                 fig.add_trace(
                     go.Scatter(
                         x=x_labels,
                         y=chart_df["BB_UPPER"],
-                        line=dict(
-                            color="rgba(100, 181, 246, 0.7)", width=1.2
-                        ),
+                        line=dict(color="rgba(41, 98, 255, 0.75)", width=1.2),
                         name="BB Upper",
+                        hoverinfo="y",
                     ),
                     row=idx,
                     col=1,
@@ -409,12 +352,9 @@ else:
                     go.Scatter(
                         x=x_labels,
                         y=chart_df["BB_MID"],
-                        line=dict(
-                            color="rgba(255, 193, 7, 0.8)",
-                            width=1.2,
-                            dash="dot",
-                        ),
-                        name="BB Mid",
+                        line=dict(color="rgba(255, 109, 0, 0.85)", width=1.2),
+                        name="BB Basis",
+                        hoverinfo="y",
                     ),
                     row=idx,
                     col=1,
@@ -423,76 +363,52 @@ else:
                     go.Scatter(
                         x=x_labels,
                         y=chart_df["BB_LOWER"],
-                        line=dict(
-                            color="rgba(100, 181, 246, 0.7)", width=1.2
-                        ),
+                        line=dict(color="rgba(41, 98, 255, 0.75)", width=1.2),
                         fill="tonexty",
-                        fillcolor="rgba(100, 181, 246, 0.06)",
+                        fillcolor="rgba(41, 98, 255, 0.06)",
                         name="BB Lower",
+                        hoverinfo="y",
                     ),
                     row=idx,
                     col=1,
                 )
 
+            # Trade Setup Levels (Entry, SL, T1-T3)
             if st.session_state.show_levels:
-                fig.add_hline(
-                    y=master["entry"],
-                    line_dash="solid",
-                    line_color="#2196f3",
-                    annotation_text="ENTRY",
-                    annotation_position="top left",
-                    row=idx,
-                    col=1,
-                )
-                fig.add_hline(
-                    y=master["stop_loss"],
-                    line_dash="dash",
-                    line_color="#ef5350",
-                    annotation_text="SL",
-                    annotation_position="bottom left",
-                    row=idx,
-                    col=1,
-                )
-                fig.add_hline(
-                    y=master["target_1"],
-                    line_dash="dot",
-                    line_color="#26a69a",
-                    annotation_text="T1",
-                    annotation_position="top left",
-                    row=idx,
-                    col=1,
-                )
-                fig.add_hline(
-                    y=master["target_2"],
-                    line_dash="dot",
-                    line_color="#00e676",
-                    annotation_text="T2",
-                    annotation_position="top left",
-                    row=idx,
-                    col=1,
-                )
-                fig.add_hline(
-                    y=master["target_3"],
-                    line_dash="dot",
-                    line_color="#00c853",
-                    annotation_text="T3",
-                    annotation_position="top left",
-                    row=idx,
-                    col=1,
-                )
+                level_specs = [
+                    (master["target_3"], "#089981", "dot", f"T3 {master['target_3']:,.2f}"),
+                    (master["target_2"], "#089981", "dot", f"T2 {master['target_2']:,.2f}"),
+                    (master["target_1"], "#089981", "dash", f"T1 {master['target_1']:,.2f}"),
+                    (master["entry"], "#2962ff", "solid", f"ENTRY {master['entry']:,.2f}"),
+                    (master["stop_loss"], "#f23645", "dash", f"SL {master['stop_loss']:,.2f}"),
+                ]
+                for y_val, l_color, l_dash, l_text in level_specs:
+                    fig.add_hline(
+                        y=y_val,
+                        line_dash=l_dash,
+                        line_width=1.2,
+                        line_color=l_color,
+                        annotation_text=l_text,
+                        annotation_position="top left",
+                        annotation_font=dict(size=10, color=l_color),
+                        row=idx,
+                        col=1,
+                    )
 
             fig.update_yaxes(
                 side="right",
                 autorange=True,
+                fixedrange=False,
                 showgrid=True,
-                gridcolor="rgba(255, 255, 255, 0.06)",
+                gridcolor="rgba(42, 46, 57, 0.08)",
+                zeroline=False,
                 row=idx,
                 col=1,
             )
 
         elif panel == "volume":
             vol_colors = [
-                "#26a69a" if c >= o else "#ef5350"
+                "rgba(8, 153, 129, 0.55)" if c >= o else "rgba(242, 54, 69, 0.55)"
                 for c, o in zip(chart_df["Close"], chart_df["Open"])
             ]
             fig.add_trace(
@@ -501,7 +417,6 @@ else:
                     y=chart_df["Volume"],
                     marker_color=vol_colors,
                     name="Volume",
-                    opacity=0.75,
                     showlegend=False,
                 ),
                 row=idx,
@@ -510,8 +425,9 @@ else:
             fig.update_yaxes(
                 side="right",
                 title_text="Vol",
+                fixedrange=False,
                 showgrid=True,
-                gridcolor="rgba(255, 255, 255, 0.06)",
+                gridcolor="rgba(42, 46, 57, 0.08)",
                 row=idx,
                 col=1,
             )
@@ -521,7 +437,7 @@ else:
                 go.Scatter(
                     x=x_labels,
                     y=chart_df["RSI"],
-                    line=dict(color="#ab47bc", width=1.8),
+                    line=dict(color="#7e57c2", width=1.6),
                     name="RSI (14)",
                     showlegend=False,
                 ),
@@ -531,14 +447,16 @@ else:
             fig.add_hline(
                 y=70,
                 line_dash="dash",
-                line_color="rgba(239, 83, 80, 0.6)",
+                line_width=1.0,
+                line_color="rgba(242, 54, 69, 0.55)",
                 row=idx,
                 col=1,
             )
             fig.add_hline(
                 y=30,
                 line_dash="dash",
-                line_color="rgba(38, 166, 154, 0.6)",
+                line_width=1.0,
+                line_color="rgba(8, 153, 129, 0.55)",
                 row=idx,
                 col=1,
             )
@@ -546,52 +464,49 @@ else:
                 side="right",
                 title_text="RSI",
                 range=[0, 100],
+                fixedrange=False,
                 showgrid=True,
-                gridcolor="rgba(255, 255, 255, 0.06)",
+                gridcolor="rgba(42, 46, 57, 0.08)",
                 row=idx,
                 col=1,
             )
 
     total_bars = len(x_labels)
-    initial_visible_bars = min(65, total_bars)
-    init_range = [
-        max(0, total_bars - initial_visible_bars) - 0.5,
-        total_bars - 0.5,
-    ]
+    initial_visible_bars = min(75, total_bars)
+    init_range = [max(0, total_bars - initial_visible_bars) - 0.5, total_bars - 0.5]
 
     fig.update_xaxes(
         type="category",
         range=init_range,
-        nticks=12,
+        nticks=10,
+        fixedrange=False,
         showgrid=True,
-        gridcolor="rgba(255, 255, 255, 0.06)",
+        gridcolor="rgba(42, 46, 57, 0.08)",
         rangeslider=dict(visible=False),
     )
-    fig.update_xaxes(
-        rangeslider=dict(
-            visible=True,
-            thickness=0.05,
-            bgcolor="rgba(255, 255, 255, 0.04)",
-        ),
-        row=rows_count,
-        col=1,
-    )
 
-    chart_height = 780 if rows_count > 1 else 680
+    # Full-viewport chart height expansion
+    chart_height = 680 if rows_count == 1 else (740 if rows_count == 2 else 800)
+
     fig.update_layout(
         height=chart_height,
-        template="plotly_dark",
+        template="plotly_white",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
         dragmode="pan",
         hovermode="x unified",
         bargap=0.22,
-        margin=dict(l=24, r=72, t=24, b=36),
+        margin=dict(l=12, r=64, t=12, b=28),
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=1.02,
+            yanchor="top",
+            y=0.99,
             xanchor="left",
-            x=0,
+            x=0.01,
+            bgcolor="rgba(255,255,255,0.75)",
         ),
+        xaxis=dict(fixedrange=False),
+        yaxis=dict(fixedrange=False),
     )
 
     st.plotly_chart(
@@ -600,17 +515,74 @@ else:
         config={
             "scrollZoom": True,
             "displayModeBar": True,
+            "displaylogo": False,
             "doubleClick": "reset",
+            "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
         },
     )
 
-# --- BOTTOM QUICK WATCHLIST BAR ---
-st.divider()
-st.markdown("### Quick Watchlist")
-watchlist_tickers = [item["symbol"] for item in settings.CORE_WATCHLIST]
-cols = st.columns(len(watchlist_tickers))
-for i, sym in enumerate(watchlist_tickers):
-    disp_name = sym.replace(".NS", "")
-    if cols[i].button(disp_name, use_container_width=True):
+# --- SEAMLESS BOTTOM QUICK WATCHLIST BAR ---
+watchlist_items = settings.CORE_WATCHLIST
+wl_cols = st.columns(len(watchlist_items))
+for i, item in enumerate(watchlist_items):
+    sym = item["symbol"]
+    disp_name = item.get("label", sym.replace(".NS", ""))
+    is_active = sym == st.session_state.active_symbol
+    if wl_cols[i].button(
+        disp_name,
+        key=f"wl_btn_{sym}",
+        type="primary" if is_active else "secondary",
+        use_container_width=True,
+    ):
         st.session_state.active_symbol = sym
         st.rerun()
+
+st.divider()
+
+# --- COLLAPSIBLE MARKET INTELLIGENCE & SCANNER DOCK ---
+with st.expander("Market Intelligence, MTF Matrix & Risk Levels", expanded=False):
+    tab_scan, tab_mtf, tab_risk = st.tabs(["Confluence Scanner", "MTF Signal Matrix", "Risk & Levels"])
+
+    with tab_scan:
+        scanner_df = run_scanner_universe(st.session_state.active_tf)
+        sig_cols = ["Master Signal", "1WK", "1D", "1H", "15M"]
+        if scanner_df.empty:
+            st.info("No high-accuracy confluence candidates found for current timeframe.")
+        else:
+            st.dataframe(
+                scanner_df.style.map(style_signal_cell, subset=sig_cols),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    with tab_mtf:
+        matrix_rows = []
+        for tf, res in mtf_results.items():
+            pat_name = res["patterns"][0]["pattern"] if res["patterns"] else "-"
+            matrix_rows.append(
+                {
+                    "Timeframe": tf,
+                    "Signal": res["signal"],
+                    "Confidence": f"{res['confidence']}%",
+                    "Score": res["score"],
+                    "RSI": res["rsi"],
+                    "Pattern": pat_name,
+                }
+            )
+        st.dataframe(
+            pd.DataFrame(matrix_rows).style.map(style_signal_cell, subset=["Signal"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with tab_risk:
+        levels_df = pd.DataFrame(
+            [
+                {"Level": "Entry Price", "Price": master["entry"]},
+                {"Level": "Stop Loss", "Price": master["stop_loss"]},
+                {"Level": "Target 1", "Price": master["target_1"]},
+                {"Level": "Target 2", "Price": master["target_2"]},
+                {"Level": "Target 3", "Price": master["target_3"]},
+            ]
+        )
+        st.dataframe(levels_df, use_container_width=True, hide_index=True)
