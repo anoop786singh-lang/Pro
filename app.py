@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timezone
 import sqlite3
 
 # --- 1. CONFIGURATION & STYLING MODULE ---
@@ -78,7 +78,12 @@ class DatabaseManager:
 
 # --- 3. UTILITIES & BULLETPROOF DATA GENERATOR ---
 def check_market_live() -> tuple[bool, str]:
-    now_ist = datetime.now(pd.Timestamp("Asia/Kolkata").tz)
+    try:
+        now_utc = datetime.now(timezone.utc)
+        now_ist = now_utc.astimezone(pd.Timestamp("Asia/Kolkata").tz)
+    except Exception:
+        now_ist = datetime.now()
+
     if now_ist.weekday() >= 5:
         return False, "MARKET CLOSED (WEEKEND)"
     current_time = now_ist.time()
@@ -286,7 +291,7 @@ class SignalEngine:
         }
 
         return {
-            "signal": signal_text, "css": f"sig-{signal_text.lower().replace(' ', '-')}",
+            "signal": signal_text, "css": "sig-" + signal_text.lower().replace(" ", "-"),
             "confidence": conf_score, "rsi": round(rsi, 1), "pattern": pattern_name,
             "levels": {"entry": round(entry, 2), "sl": round(sl, 2), "t1": round(t1, 2), "t2": round(t2, 2), "t3": round(t3, 2)},
             "tech_summary": tech_summary, "pivots": pivots
@@ -377,7 +382,6 @@ def run_dashboard():
                 sym, lbl = item["symbol"], item["label"]
                 if search_q and search_q not in lbl and search_q not in sym: continue
                 is_active = st.session_state.active_symbol == sym
-                btn_style = "border: 2px solid #2962ff; background-color: rgba(41,98,255,0.1);" if is_active else ""
                 if st.button(f"{'▶ ' if is_active else ''}{lbl}", key=f"wl_{sym}", use_container_width=True):
                     st.session_state.active_symbol, st.session_state.active_label = sym, lbl
                     st.rerun()
