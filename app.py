@@ -232,7 +232,7 @@ class SignalEngine:
         if macd > macd_sig: raw_score += 5.0
         else: raw_score -= 5.0
 
-        candle_ body = abs(close - open_p)
+        candle_body = abs(close - open_p)
         candle_range = max(high - low, 1e-6)
         is_bullish = close > open_p
         if candle_body / candle_range > 0.6:
