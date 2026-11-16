@@ -225,7 +225,6 @@ chart_source_df = ensure_bollinger_bands(
 )
 
 # --- TRADINGVIEW-STYLE INLINE TOP HEADER BAR ---
-# Row 1: Ticker Selector | Timeframe Pills/Select | LTP | Master Signal
 hdr_c1, hdr_c2, hdr_c3, hdr_c4 = st.columns([2.2, 2.8, 1.8, 2.2])
 
 with hdr_c1:
@@ -272,7 +271,7 @@ with hdr_c4:
         delta=f"{master['confidence_score']}% Conf",
     )
 
-# Row 2: Inline Instant Indicator & Overlay Toggles directly above the chart canvas
+# Inline Instant Indicator & Overlay Toggles
 tog_c1, tog_c2, tog_c3, tog_c4, tog_c5, _ = st.columns([1.1, 1.2, 1.2, 1.5, 1.2, 3.8])
 with tog_c1:
     st.session_state.panel_price = st.toggle("Price", value=st.session_state.panel_price, key="tog_price")
@@ -285,7 +284,7 @@ with tog_c4:
 with tog_c5:
     st.session_state.show_levels = st.toggle("Levels", value=st.session_state.show_levels, key="tog_lvl")
 
-# --- DYNAMIC SUBPLOT ENGINE (Unchecked panels completely omitted so active panels fill 100% height) ---
+# --- DYNAMIC SUBPLOT ENGINE ---
 active_panels = []
 if st.session_state.panel_price:
     active_panels.append("price")
@@ -301,7 +300,6 @@ else:
     fmt_str = "%d %b %H:%M" if st.session_state.active_tf in ["15M", "1H"] else "%d %b '%y"
     x_labels = chart_df.index.strftime(fmt_str)
 
-    # Dynamic height & proportional row allocation
     weight_map = {"price": 0.68, "volume": 0.15, "rsi": 0.17}
     raw_weights = [weight_map[p] for p in active_panels]
     total_weight = sum(raw_weights)
@@ -335,7 +333,6 @@ else:
                 col=1,
             )
 
-            # Bollinger Bands (20, 2) - TradingView Light Theme Styling
             if st.session_state.show_bb and {"BB_UPPER", "BB_MID", "BB_LOWER"}.issubset(chart_df.columns):
                 fig.add_trace(
                     go.Scatter(
@@ -373,7 +370,7 @@ else:
                     col=1,
                 )
 
-            # Trade Setup Levels (Entry, SL, T1-T3)
+            # Preserved Trade Setup Levels (Entry, SL, T1-T3)
             if st.session_state.show_levels:
                 level_specs = [
                     (master["target_3"], "#089981", "dot", f"T3 {master['target_3']:,.2f}"),
@@ -485,7 +482,6 @@ else:
         rangeslider=dict(visible=False),
     )
 
-    # Full-viewport chart height expansion
     chart_height = 680 if rows_count == 1 else (740 if rows_count == 2 else 800)
 
     fig.update_layout(
