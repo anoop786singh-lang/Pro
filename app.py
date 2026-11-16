@@ -9,36 +9,13 @@ from settings import settings
 st.set_page_config(page_title=settings.PROJECT_NAME, layout="wide")
 
 NSE_SCANNER_UNIVERSE = [
-    "RELIANCE.NS",
-    "TCS.NS",
-    "HDFCBANK.NS",
-    "ICICIBANK.NS",
-    "INFY.NS",
-    "SBIN.NS",
-    "BHARTIARTL.NS",
-    "ITC.NS",
-    "LT.NS",
-    "KOTAKBANK.NS",
-    "AXISBANK.NS",
-    "HINDUNILVR.NS",
-    "BAJFINANCE.NS",
-    "MARUTI.NS",
-    "SUNPHARMA.NS",
-    "TATAMOTORS.NS",
-    "TITAN.NS",
-    "NTPC.NS",
-    "POWERGRID.NS",
-    "ULTRACEMCO.NS",
-    "ASIANPAINT.NS",
-    "WIPRO.NS",
-    "HCLTECH.NS",
-    "ADANIENT.NS",
-    "ADANIPORTS.NS",
-    "ONGC.NS",
-    "COALINDIA.NS",
-    "JSWSTEEL.NS",
-    "TATASTEEL.NS",
-    "M&M.NS",
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
+    "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS", "KOTAKBANK.NS",
+    "AXISBANK.NS", "HINDUNILVR.NS", "BAJFINANCE.NS", "MARUTI.NS",
+    "SUNPHARMA.NS", "TATAMOTORS.NS", "TITAN.NS", "NTPC.NS",
+    "POWERGRID.NS", "ULTRACEMCO.NS", "ASIANPAINT.NS", "WIPRO.NS",
+    "HCLTECH.NS", "ADANIENT.NS", "ADANIPORTS.NS", "ONGC.NS",
+    "COALINDIA.NS", "JSWSTEEL.NS", "TATASTEEL.NS", "M&M.NS",
 ]
 
 
@@ -174,22 +151,24 @@ def run_nse_topdown_scanner(exec_tf: str) -> pd.DataFrame:
     )
 
 
-st.sidebar.title(f"{settings.PROJECT_NAME} v{settings.VERSION}")
-watchlist_map = {
-    f"{item['label']} ({item['category']})": item["symbol"]
-    for item in settings.CORE_WATCHLIST
-}
-selected_label = st.sidebar.selectbox("Instrument", list(watchlist_map.keys()))
-custom_symbol = st.sidebar.text_input("Or Custom Ticker", "")
-symbol = (
-    custom_symbol.strip().upper()
-    if custom_symbol.strip()
-    else watchlist_map[selected_label]
-)
+# --- INITIALIZE SESSION STATE ---
+if "active_symbol" not in st.session_state:
+    st.session_state.active_symbol = settings.CORE_WATCHLIST[0]["symbol"]
+if "active_tf" not in st.session_state:
+    st.session_state.active_tf = "1D"
+if "panel_price" not in st.session_state:
+    st.session_state.panel_price = True
+if "panel_volume" not in st.session_state:
+    st.session_state.panel_volume = True
+if "panel_rsi" not in st.session_state:
+    st.session_state.panel_rsi = True
+if "show_bb" not in st.session_state:
+    st.session_state.show_bb = True
+if "show_levels" not in st.session_state:
+    st.session_state.show_levels = True
 
-exec_tf = st.sidebar.selectbox(
-    "Execution Timeframe", list(settings.TIMEFRAMES.keys()), index=1
-)
+# --- SIDEBAR (Global Defaults) ---
+st.sidebar.title(f"{settings.PROJECT_NAME} v{settings.VERSION}")
 capital = st.sidebar.number_input(
     "Trading Capital (INR)", value=settings.INITIAL_CAPITAL
 )
@@ -197,81 +176,98 @@ risk_pct = st.sidebar.slider(
     "Max Risk Per Trade (%)", 0.5, 5.0, settings.MAX_RISK_PER_TRADE_PCT
 )
 
-st.sidebar.divider()
-st.sidebar.subheader("Chart Overlays & Panels")
-show_price = st.sidebar.checkbox("Show Price Chart", value=True)
-show_volume = st.sidebar.checkbox("Show Volume Panel", value=True)
-show_rsi = st.sidebar.checkbox("Show RSI Panel", value=True)
-show_bb = st.sidebar.checkbox("Show Bollinger Bands", value=True)
-show_levels = st.sidebar.checkbox("Show Entry / SL / Targets", value=True)
-
-raw_data = fetch_all_timeframes(symbol)
+# Fetch Data
+raw_data = fetch_all_timeframes(st.session_state.active_symbol)
 mtf_results = {tf: evaluate_timeframe(df) for tf, df in raw_data.items()}
 
-if mtf_results[exec_tf]["price"] == 0:
-    st.error("Unable to fetch data. Verify ticker.")
+if not raw_data or all(df.empty for df in raw_data.values()):
+    st.error("Unable to fetch data for ticker.")
     st.stop()
 
-master = compute_master_and_risk(mtf_results, exec_tf, capital, risk_pct)
+master = compute_master_and_risk(
+    mtf_results, st.session_state.active_tf, capital, risk_pct
+)
 
-st.title(f"Institutional Terminal — {symbol}")
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("LTP", f"{master['entry']:,.2f}")
-k2.metric("Master Signal", master["master_signal"])
-k3.metric("Confidence", f"{master['confidence_score']}%")
-k4.metric("Recommended Qty", f"{master['position_qty']:,}")
-k5.metric("Risk Amount", f"{master['risk_amount']:,.0f}")
+# --- TRADINGVIEW STYLE TOP CONTROL BAR ---
+st.markdown("### Active Instrument & View")
+top_c1, top_c2, top_c3, top_c4 = st.columns([2, 1.5, 2.5, 4])
+
+with top_c1:
+    inline_ticker = st.text_input(
+        "Switch Ticker",
+        value=st.session_state.active_symbol.replace(".NS", ""),
+        help="Type symbol and press Enter",
+    ).upper()
+    if inline_ticker and f"{inline_ticker}.NS" != st.session_state.active_symbol:
+        st.session_state.active_symbol = f"{inline_ticker}.NS"
+        st.rerun()
+
+with top_c2:
+    inline_tf = st.selectbox(
+        "Timeframe",
+        list(settings.TIMEFRAMES.keys()),
+        index=list(settings.TIMEFRAMES.keys()).index(
+            st.session_state.active_tf
+        ),
+    )
+    if inline_tf != st.session_state.active_tf:
+        st.session_state.active_tf = inline_tf
+        st.rerun()
+
+with top_c3:
+    st.metric("LTP", f"{master['entry']:,.2f}")
+
+with top_c4:
+    st.metric(
+        "Master Signal",
+        master["master_signal"],
+        delta=f"{master['confidence_score']}% Conf",
+    )
 
 st.divider()
 
-st.subheader(f"NSE Top-Down High-Accuracy Scanner ({exec_tf} Execution)")
-with st.spinner("Scanning NSE universe for RSI + BB + Breakout confluence..."):
-    scanner_df = run_nse_topdown_scanner(exec_tf)
+# --- SCANNER SECTION (Tabs Dock) ---
+st.subheader("Market Intelligence & Scanner")
+scan_tab1, scan_tab2, scan_tab3 = st.tabs(
+    ["Scanner", "MTF Signal Matrix", "Risk & Positions"]
+)
 
-sig_cols = ["Master Signal", "1WK", "1D", "1H", "15M"]
-
-if scanner_df.empty:
-    st.info(
-        "No high-accuracy Buy/Sell confluence candidates found in current"
-        " cycle."
-    )
-else:
-    compact_cols = [
-        "Stock",
-        "LTP",
-        "Master Signal",
-        "Conf %",
-        "1D",
-        "1H",
-        "15M",
-        "RSI",
-        "BB Status",
-        "Trigger / Pattern",
-    ]
-    compact_df = scanner_df[compact_cols].head(5)
-    st.dataframe(
-        compact_df.style.map(
-            style_signal_cell, subset=["Master Signal", "1D", "1H", "15M"]
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    with st.expander(
-        f"Expand Full NSE Scanner Matrix ({len(scanner_df)} Qualified Stocks)",
-        expanded=False,
-    ):
+with scan_tab1:
+    scanner_df = run_nse_topdown_scanner(st.session_state.active_tf)
+    sig_cols = ["Master Signal", "1WK", "1D", "1H", "15M"]
+    if scanner_df.empty:
+        st.info("No high-accuracy confluence candidates found.")
+    else:
+        compact_cols = [
+            "Stock",
+            "LTP",
+            "Master Signal",
+            "Conf %",
+            "1D",
+            "1H",
+            "15M",
+            "RSI",
+            "BB Status",
+            "Trigger / Pattern",
+        ]
         st.dataframe(
-            scanner_df.style.map(style_signal_cell, subset=sig_cols),
+            scanner_df[compact_cols].head(5).style.map(
+                style_signal_cell, subset=["Master Signal", "1D", "1H", "15M"]
+            ),
             use_container_width=True,
             hide_index=True,
         )
+        with st.expander(
+            f"Expand Full NSE Scanner Matrix ({len(scanner_df)} Stocks)",
+            expanded=False,
+        ):
+            st.dataframe(
+                scanner_df.style.map(style_signal_cell, subset=sig_cols),
+                use_container_width=True,
+                hide_index=True,
+            )
 
-st.divider()
-
-col_matrix, col_risk = st.columns([1.3, 1])
-with col_matrix:
-    st.subheader("Multi-Timeframe Signal Matrix")
+with scan_tab2:
     matrix_rows = []
     for tf, res in mtf_results.items():
         pat_name = (
@@ -294,8 +290,7 @@ with col_matrix:
         hide_index=True,
     )
 
-with col_risk:
-    st.subheader("Dynamic Targets & Risk Management")
+with scan_tab3:
     levels_df = pd.DataFrame(
         [
             {"Level": "Entry Price", "Price": master["entry"]},
@@ -307,25 +302,56 @@ with col_risk:
     )
     st.dataframe(levels_df, use_container_width=True, hide_index=True)
 
+st.divider()
+
+# --- DYNAMIC CHART CANVAS ---
+st.markdown("### Chart Viewport")
+
+# Inline Panel & Overlay Toggles
+ctrl_c1, ctrl_c2, ctrl_c3, ctrl_c4, ctrl_c5, _ = st.columns(
+    [1, 1, 1.2, 1, 1.5, 4]
+)
+with ctrl_c1:
+    st.session_state.panel_price = st.checkbox(
+        "Price", value=st.session_state.panel_price
+    )
+with ctrl_c2:
+    st.session_state.panel_volume = st.checkbox(
+        "Volume", value=st.session_state.panel_volume
+    )
+with ctrl_c3:
+    st.session_state.panel_rsi = st.checkbox(
+        "RSI (14)", value=st.session_state.panel_rsi
+    )
+with ctrl_c4:
+    st.session_state.show_bb = st.checkbox(
+        "BB", value=st.session_state.show_bb
+    )
+with ctrl_c5:
+    st.session_state.show_levels = st.checkbox(
+        "Levels", value=st.session_state.show_levels
+    )
+
 active_panels = []
-if show_price:
+if st.session_state.panel_price:
     active_panels.append("price")
-if show_volume:
+if st.session_state.panel_volume:
     active_panels.append("volume")
-if show_rsi:
+if st.session_state.panel_rsi:
     active_panels.append("rsi")
 
 if not active_panels:
-    st.warning(
-        "All chart panels are hidden. Enable at least one panel (Price,"
-        " Volume, or RSI) in the sidebar."
-    )
+    st.warning("All panels disabled. Enable at least one panel above.")
 else:
-    chart_df = mtf_results[exec_tf]["df"].tail(180).copy()
-    fmt_str = "%d %b %H:%M" if exec_tf in ["15M", "1H"] else "%d %b %Y"
+    chart_df = mtf_results[st.session_state.active_tf]["df"].tail(180).copy()
+    fmt_str = (
+        "%d %b %H:%M"
+        if st.session_state.active_tf in ["15M", "1H"]
+        else "%d %b %Y"
+    )
     x_labels = chart_df.index.strftime(fmt_str)
 
-    weight_map = {"price": 0.62, "volume": 0.17, "rsi": 0.21}
+    weight_map = {"price": 0.65, "volume": 0.16, "rsi": 0.19}
     raw_weights = [weight_map[p] for p in active_panels]
     total_w = sum(raw_weights)
     row_heights = [w / total_w for w in raw_weights]
@@ -335,7 +361,7 @@ else:
         rows=rows_count,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.04 if rows_count > 1 else 0.0,
+        vertical_spacing=0.035 if rows_count > 1 else 0.0,
         row_heights=row_heights,
     )
 
@@ -358,17 +384,23 @@ else:
                     ),
                     whiskerwidth=0.4,
                     name="Price",
+                    showlegend=False,
                 ),
                 row=idx,
                 col=1,
             )
 
-            if show_bb and "BB_UPPER" in chart_df.columns:
+            if (
+                st.session_state.show_bb
+                and "BB_UPPER" in chart_df.columns
+            ):
                 fig.add_trace(
                     go.Scatter(
                         x=x_labels,
                         y=chart_df["BB_UPPER"],
-                        line=dict(color="rgba(100, 181, 246, 0.7)", width=1.2),
+                        line=dict(
+                            color="rgba(100, 181, 246, 0.7)", width=1.2
+                        ),
                         name="BB Upper",
                     ),
                     row=idx,
@@ -383,7 +415,7 @@ else:
                             width=1.2,
                             dash="dot",
                         ),
-                        name="BB Mid (20)",
+                        name="BB Mid",
                     ),
                     row=idx,
                     col=1,
@@ -392,7 +424,9 @@ else:
                     go.Scatter(
                         x=x_labels,
                         y=chart_df["BB_LOWER"],
-                        line=dict(color="rgba(100, 181, 246, 0.7)", width=1.2),
+                        line=dict(
+                            color="rgba(100, 181, 246, 0.7)", width=1.2
+                        ),
                         fill="tonexty",
                         fillcolor="rgba(100, 181, 246, 0.06)",
                         name="BB Lower",
@@ -401,7 +435,7 @@ else:
                     col=1,
                 )
 
-            if show_levels:
+            if st.session_state.show_levels:
                 fig.add_hline(
                     y=master["entry"],
                     line_dash="solid",
@@ -451,7 +485,6 @@ else:
             fig.update_yaxes(
                 side="right",
                 autorange=True,
-                fixedrange=False,
                 showgrid=True,
                 gridcolor="rgba(255, 255, 255, 0.06)",
                 row=idx,
@@ -470,6 +503,7 @@ else:
                     marker_color=vol_colors,
                     name="Volume",
                     opacity=0.75,
+                    showlegend=False,
                 ),
                 row=idx,
                 col=1,
@@ -477,7 +511,6 @@ else:
             fig.update_yaxes(
                 side="right",
                 title_text="Vol",
-                fixedrange=False,
                 showgrid=True,
                 gridcolor="rgba(255, 255, 255, 0.06)",
                 row=idx,
@@ -491,6 +524,7 @@ else:
                     y=chart_df["RSI"],
                     line=dict(color="#ab47bc", width=1.8),
                     name="RSI (14)",
+                    showlegend=False,
                 ),
                 row=idx,
                 col=1,
@@ -513,7 +547,6 @@ else:
                 side="right",
                 title_text="RSI",
                 range=[0, 100],
-                fixedrange=True,
                 showgrid=True,
                 gridcolor="rgba(255, 255, 255, 0.06)",
                 row=idx,
@@ -545,14 +578,14 @@ else:
         col=1,
     )
 
-    chart_height = 760 if rows_count > 1 else 620
+    chart_height = 780 if rows_count > 1 else 680
     fig.update_layout(
         height=chart_height,
         template="plotly_dark",
         dragmode="pan",
         hovermode="x unified",
         bargap=0.22,
-        margin=dict(l=24, r=72, t=48, b=36),
+        margin=dict(l=24, r=72, t=24, b=36),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -565,5 +598,20 @@ else:
     st.plotly_chart(
         fig,
         use_container_width=True,
-        config={"scrollZoom": True, "displayModeBar": True},
+        config={
+            "scrollZoom": True,
+            "displayModeBar": True,
+            "doubleClick": "reset",
+        },
     )
+
+# --- BOTTOM QUICK WATCHLIST BAR ---
+st.divider()
+st.markdown("### Quick Watchlist")
+watchlist_tickers = [item["symbol"] for item in settings.CORE_WATCHLIST]
+cols = st.columns(len(watchlist_tickers))
+for i, sym in enumerate(watchlist_tickers):
+    disp_name = sym.replace(".NS", "")
+    if cols[i].button(disp_name, use_container_width=True):
+        st.session_state.active_symbol = sym
+        st.rerun()
