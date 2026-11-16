@@ -32,7 +32,9 @@ def style_signal_cell(val: str) -> str:
     return "background-color: #2b3035; color: #adb5bd;"
 
 
-def evaluate_bb_and_breakout_confluence(df: pd.DataFrame, master_signal: str) -> tuple[bool, str, str]:
+def evaluate_bb_and_breakout_confluence(
+    df: pd.DataFrame, master_signal: str
+) -> tuple[bool, str, str]:
     if df.empty or len(df) < 25 or "BB_UPPER" not in df.columns:
         return False, "N/A", "None"
 
@@ -191,7 +193,10 @@ sig_cols = ["Master Signal", "1WK", "1D", "1H", "15M"]
 if scanner_df.empty:
     st.info("No high-accuracy Buy/Sell confluence candidates found in current cycle.")
 else:
-    compact_cols = ["Stock", "LTP", "Master Signal", "Conf %", "1D", "1H", "15M", "RSI", "BB Status", "Trigger / Pattern"]
+    compact_cols = [
+        "Stock", "LTP", "Master Signal", "Conf %", "1D", "1H", "15M",
+        "RSI", "BB Status", "Trigger / Pattern"
+    ]
     compact_df = scanner_df[compact_cols].head(5)
     st.dataframe(
         compact_df.style.map(style_signal_cell, subset=["Master Signal", "1D", "1H", "15M"]),
@@ -244,33 +249,37 @@ with col_risk:
     )
     st.dataframe(levels_df, use_container_width=True, hide_index=True)
 
-chart_df = mtf_results[exec_tf]["df"].tail(120)
+# --- Smooth Candlestick Chart Configuration ---
+chart_df = mtf_results[exec_tf]["df"].tail(180).copy()
+fmt_str = "%d %b %H:%M" if exec_tf in ["15M", "1H"] else "%d %b %Y"
+x_labels = chart_df.index.strftime(fmt_str)
 
 rows_count = 1 + int(show_volume) + int(show_rsi)
 if rows_count == 1:
     row_heights = [1.0]
 elif rows_count == 2:
-    row_heights = [0.76, 0.24]
+    row_heights = [0.75, 0.25]
 else:
-    row_heights = [0.64, 0.16, 0.20]
+    row_heights = [0.62, 0.17, 0.21]
 
 fig = make_subplots(
     rows=rows_count,
     cols=1,
     shared_xaxes=True,
-    vertical_spacing=0.03,
+    vertical_spacing=0.04,
     row_heights=row_heights,
 )
 
 fig.add_trace(
     go.Candlestick(
-        x=chart_df.index,
+        x=x_labels,
         open=chart_df["Open"],
         high=chart_df["High"],
         low=chart_df["Low"],
         close=chart_df["Close"],
-        increasing_line_color="#26a69a",
-        decreasing_line_color="#ef5350",
+        increasing=dict(line=dict(color="#26a69a", width=1.2), fillcolor="#26a69a"),
+        decreasing=dict(line=dict(color="#ef5350", width=1.2), fillcolor="#ef5350"),
+        whiskerwidth=0.4,
         name="Price",
     ),
     row=1,
@@ -280,9 +289,9 @@ fig.add_trace(
 if show_bb and "BB_UPPER" in chart_df.columns:
     fig.add_trace(
         go.Scatter(
-            x=chart_df.index,
+            x=x_labels,
             y=chart_df["BB_UPPER"],
-            line=dict(color="rgba(100, 181, 246, 0.6)", width=1),
+            line=dict(color="rgba(100, 181, 246, 0.7)", width=1.2),
             name="BB Upper",
         ),
         row=1,
@@ -290,9 +299,9 @@ if show_bb and "BB_UPPER" in chart_df.columns:
     )
     fig.add_trace(
         go.Scatter(
-            x=chart_df.index,
+            x=x_labels,
             y=chart_df["BB_MID"],
-            line=dict(color="rgba(255, 193, 7, 0.7)", width=1, dash="dot"),
+            line=dict(color="rgba(255, 193, 7, 0.8)", width=1.2, dash="dot"),
             name="BB Mid (20)",
         ),
         row=1,
@@ -300,9 +309,9 @@ if show_bb and "BB_UPPER" in chart_df.columns:
     )
     fig.add_trace(
         go.Scatter(
-            x=chart_df.index,
+            x=x_labels,
             y=chart_df["BB_LOWER"],
-            line=dict(color="rgba(100, 181, 246, 0.6)", width=1),
+            line=dict(color="rgba(100, 181, 246, 0.7)", width=1.2),
             fill="tonexty",
             fillcolor="rgba(100, 181, 246, 0.06)",
             name="BB Lower",
@@ -312,11 +321,11 @@ if show_bb and "BB_UPPER" in chart_df.columns:
     )
 
 if show_levels:
-    fig.add_hline(y=master["entry"], line_dash="solid", line_color="#2196f3", annotation_text="ENTRY", row=1, col=1)
-    fig.add_hline(y=master["stop_loss"], line_dash="dash", line_color="#ef5350", annotation_text="SL", row=1, col=1)
-    fig.add_hline(y=master["target_1"], line_dash="dot", line_color="#26a69a", annotation_text="T1", row=1, col=1)
-    fig.add_hline(y=master["target_2"], line_dash="dot", line_color="#00e676", annotation_text="T2", row=1, col=1)
-    fig.add_hline(y=master["target_3"], line_dash="dot", line_color="#00c853", annotation_text="T3", row=1, col=1)
+    fig.add_hline(y=master["entry"], line_dash="solid", line_color="#2196f3", annotation_text="ENTRY", annotation_position="top left", row=1, col=1)
+    fig.add_hline(y=master["stop_loss"], line_dash="dash", line_color="#ef5350", annotation_text="SL", annotation_position="bottom left", row=1, col=1)
+    fig.add_hline(y=master["target_1"], line_dash="dot", line_color="#26a69a", annotation_text="T1", annotation_position="top left", row=1, col=1)
+    fig.add_hline(y=master["target_2"], line_dash="dot", line_color="#00e676", annotation_text="T2", annotation_position="top left", row=1, col=1)
+    fig.add_hline(y=master["target_3"], line_dash="dot", line_color="#00c853", annotation_text="T3", annotation_position="top left", row=1, col=1)
 
 current_row = 2
 
@@ -327,7 +336,7 @@ if show_volume:
     ]
     fig.add_trace(
         go.Bar(
-            x=chart_df.index,
+            x=x_labels,
             y=chart_df["Volume"],
             marker_color=vol_colors,
             name="Volume",
@@ -336,13 +345,13 @@ if show_volume:
         row=current_row,
         col=1,
     )
-    fig.update_yaxes(title_text="Vol", row=current_row, col=1)
+    fig.update_yaxes(title_text="Vol", fixedrange=False, row=current_row, col=1)
     current_row += 1
 
 if show_rsi:
     fig.add_trace(
         go.Scatter(
-            x=chart_df.index,
+            x=x_labels,
             y=chart_df["RSI"],
             line=dict(color="#ab47bc", width=1.8),
             name="RSI (14)",
@@ -352,14 +361,59 @@ if show_rsi:
     )
     fig.add_hline(y=70, line_dash="dash", line_color="rgba(239, 83, 80, 0.6)", row=current_row, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="rgba(38, 166, 154, 0.6)", row=current_row, col=1)
-    fig.update_yaxes(title_text="RSI", range=[0, 100], row=current_row, col=1)
+    fig.update_yaxes(title_text="RSI", range=[0, 100], fixedrange=True, row=current_row, col=1)
 
-chart_height = 680 if rows_count > 1 else 560
+total_bars = len(x_labels)
+initial_visible_bars = min(65, total_bars)
+init_range = [max(0, total_bars - initial_visible_bars) - 0.5, total_bars - 0.5]
+
+fig.update_xaxes(
+    type="category",
+    range=init_range,
+    nticks=12,
+    showgrid=True,
+    gridcolor="rgba(255, 255, 255, 0.06)",
+    rangeslider=dict(visible=False),
+)
+fig.update_xaxes(
+    rangeslider=dict(
+        visible=True,
+        thickness=0.05,
+        bgcolor="rgba(255, 255, 255, 0.04)",
+    ),
+    row=rows_count,
+    col=1,
+)
+
+fig.update_yaxes(
+    side="right",
+    autorange=True,
+    fixedrange=False,
+    showgrid=True,
+    gridcolor="rgba(255, 255, 255, 0.06)",
+    row=1,
+    col=1,
+)
+
+chart_height = 760 if rows_count > 1 else 620
 fig.update_layout(
     height=chart_height,
-    xaxis_rangeslider_visible=False,
     template="plotly_dark",
-    margin=dict(l=10, r=10, t=25, b=10),
-    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
+    dragmode="pan",
+    hovermode="x unified",
+    bargap=0.22,
+    margin=dict(l=24, r=72, t=48, b=36),
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0,
+    ),
 )
-st.plotly_chart(fig, use_container_width=True)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True,
+    config={"scrollZoom": True, "displayModeBar": True},
+)
