@@ -637,4 +637,3 @@ with st.expander("Market Intelligence, MTF Matrix & Risk Levels", expanded=False
             ]
         )
         st.dataframe(levels_df, use_container_width=True, hide_index=True)
-
