@@ -7,7 +7,7 @@ from plotly.subplots import make_subplots
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ---------------------------------------------------------
-# PAGE CONFIGURATION & INVESTING.COM STYLE CSS
+# PAGE CONFIGURATION & TRADINGVIEW STYLE CSS
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Ultra Accuracy Technical Scanner",
@@ -18,128 +18,44 @@ st.set_page_config(
 if "fullscreen_section" not in st.session_state:
     st.session_state.fullscreen_section = None
 
+# Initialize Chart Toggles
+default_toggles = {
+    "ind_bb": True, "ind_ema": False, "ind_vol": True,
+    "ind_rsi": False, "ind_macd": False, "ind_trades": True,
+    "ind_pivots": False
+}
+for k, v in default_toggles.items():
+    if k not in st.session_state: st.session_state[k] = v
+
 def toggle_fullscreen(section_key: str):
-    if st.session_state.fullscreen_section == section_key:
-        st.session_state.fullscreen_section = None
-    else:
-        st.session_state.fullscreen_section = section_key
+    st.session_state.fullscreen_section = None if st.session_state.fullscreen_section == section_key else section_key
+
+def toggle_chart_indicator(ind_key: str):
+    st.session_state[ind_key] = not st.session_state[ind_key]
 
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 2rem; }
-    .tf-card {
-        border-radius: 10px;
-        padding: 15px 12px;
-        text-align: center;
-        font-weight: 800;
-        border: 2px solid #e2e8f0;
-        margin-bottom: 10px;
-        font-size: 1.1rem;
-    }
+    .tf-card { border-radius: 10px; padding: 15px 12px; text-align: center; font-weight: 800; border: 2px solid #e2e8f0; margin-bottom: 10px; font-size: 1.1rem; }
     .tf-title { font-size: 0.85rem; color: #334155; text-transform: uppercase; margin-bottom: 6px; font-weight: 700; }
-    .sig-strong-buy { background-color: #16a34a; color: #ffffff; border: 2px solid #16a34a; box-shadow: 0 4px 14px rgba(22, 163, 74, 0.4); }
+    .sig-strong-buy { background-color: #16a34a; color: #ffffff; border: 2px solid #16a34a; }
     .sig-buy { background-color: #22c55e; color: #ffffff; border: 2px solid #15803d; }
     .sig-neutral { background-color: #64748b; color: #ffffff; border: 2px solid #475569; }
     .sig-sell { background-color: #ef4444; color: #ffffff; border: 2px solid #b91c1c; }
-    .sig-strong-sell { background-color: #dc2626; color: #ffffff; border: 2px solid #991b1b; box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4); }
-    .summary-banner {
-        border-radius: 10px;
-        padding: 16px;
-        text-align: center;
-        font-size: 1.3rem;
-        font-weight: 900;
-        letter-spacing: 1px;
-        margin: 10px 0 20px 0;
-        text-transform: uppercase;
-    }
-    /* Fullscreen Mode Banner & Container Styling */
-    .fs-active-banner {
-        background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%);
-        color: #f8fafc;
-        padding: 10px 18px;
-        border-radius: 8px;
-        font-weight: 700;
-        font-size: 0.95rem;
-        margin-bottom: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-left: 5px solid #22c55e;
-    }
-    .section-header-box {
-        font-size: 1.15rem;
-        font-weight: 800;
-        color: #0f172a;
-        padding-top: 4px;
-    }
-    /* Market Overview Card Styling */
-    .mkt-card {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 12px 14px 4px 14px;
-        box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
-        margin-bottom: 6px;
-    }
-    .mkt-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 0.82rem;
-        font-weight: 700;
-        color: #475569;
-        text-transform: uppercase;
-    }
-    .mkt-price {
-        font-size: 1.25rem;
-        font-weight: 800;
-        color: #0f172a;
-        margin-top: 2px;
-    }
-    .mkt-pos { color: #16a34a; font-weight: 700; font-size: 0.85rem; }
-    .mkt-neg { color: #dc2626; font-weight: 700; font-size: 0.85rem; }
-    /* Blinking Live Market Badge */
-    .top-bar-container {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 4px 0 12px 0;
-        border-bottom: 1px solid #e2e8f0;
-        margin-bottom: 14px;
-    }
-    .app-main-title {
-        font-size: 1.45rem;
-        font-weight: 900;
-        color: #0f172a;
-        letter-spacing: -0.3px;
-    }
-    .live-badge {
-        display: inline-flex;
-        align-items: center;
-        background-color: #16a34a;
-        color: white;
-        padding: 6px 14px;
-        border-radius: 20px;
-        font-weight: 800;
-        font-size: 0.88rem;
-        letter-spacing: 0.5px;
-        box-shadow: 0 0 15px rgba(22, 163, 74, 0.6);
-        animation: pulse 1.5s infinite;
-    }
-    .live-dot {
-        height: 10px;
-        width: 10px;
-        background-color: #ffffff;
-        border-radius: 50%;
-        display: inline-block;
-        margin-right: 8px;
-        box-shadow: 0 0 8px #ffffff;
-    }
-    @keyframes pulse {
-        0% { transform: scale(1); box-shadow: 0 0 15px rgba(22, 163, 74, 0.6); }
-        50% { transform: scale(1.05); box-shadow: 0 0 25px rgba(22, 163, 74, 0.9); }
-        100% { transform: scale(1); box-shadow: 0 0 15px rgba(22, 163, 74, 0.6); }
-    }
+    .sig-strong-sell { background-color: #dc2626; color: #ffffff; border: 2px solid #991b1b; }
+    .summary-banner { border-radius: 10px; padding: 16px; text-align: center; font-size: 1.3rem; font-weight: 900; margin: 10px 0 20px 0; text-transform: uppercase; }
+    .fs-active-banner { background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%); color: #f8fafc; padding: 10px 18px; border-radius: 8px; font-weight: 700; margin-bottom: 12px; display: flex; justify-content: space-between; border-left: 5px solid #22c55e; }
+    .section-header-box { font-size: 1.15rem; font-weight: 800; color: #0f172a; }
+    .mkt-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px 4px 14px; margin-bottom: 6px; }
+    .mkt-header { display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; font-weight: 700; color: #475569; }
+    .mkt-price { font-size: 1.25rem; font-weight: 800; color: #0f172a; margin-top: 2px; }
+    .mkt-pos { color: #16a34a; font-weight: 700; }
+    .mkt-neg { color: #dc2626; font-weight: 700; }
+    .top-bar-container { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; margin-bottom: 14px; }
+    .app-main-title { font-size: 1.45rem; font-weight: 900; color: #0f172a; }
+    .live-badge { display: inline-flex; align-items: center; background-color: #16a34a; color: white; padding: 6px 14px; border-radius: 20px; font-weight: 800; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+    .tv-toolbar-label { font-size: 0.78rem; font-weight: 800; color: #475569; text-transform: uppercase; margin-top: 6px; margin-bottom: 4px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
 </style>
 """, unsafe_allow_html=True)
 # ---------------------------------------------------------
@@ -162,9 +78,6 @@ GLOBAL_ASSETS = [
     {"name": "USD / INR", "ticker": "INR=X", "category": "Crypto & Forex", "prefix": "₹"}
 ]
 
-# ---------------------------------------------------------
-# UNIVERSE: FULL NIFTY 50 CONSTITUENTS (NSE)
-# ---------------------------------------------------------
 NIFTY_50 = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "BHARTIARTL.NS",
     "SBIN.NS", "INFY.NS", "LICI.NS", "ITC.NS", "HINDUNILVR.NS",
@@ -193,36 +106,22 @@ def _fetch_single_index(item: dict) -> dict:
         df = yf.download(item["ticker"], period="5d", interval="15m", progress=False, auto_adjust=True)
         if df is None or df.empty:
             df = yf.download(item["ticker"], period="1mo", interval="1d", progress=False, auto_adjust=True)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df.dropna(inplace=True)
-        if len(df) < 2:
-            return None
+        if len(df) < 2: return None
 
         curr = float(df["Close"].iloc[-1])
         dates = df.index.date
         unique_dates = pd.unique(dates)
-        if len(unique_dates) >= 2:
-            prev_day_df = df[dates == unique_dates[-2]]
-            prev_close = float(prev_day_df["Close"].iloc[-1])
-        else:
-            prev_close = float(df["Close"].iloc[0])
-
+        prev_close = float(df[dates == unique_dates[-2]]["Close"].iloc[-1]) if len(unique_dates) >= 2 else float(df["Close"].iloc[0])
         chg = curr - prev_close
         chg_pct = (chg / prev_close) * 100 if prev_close != 0 else 0.0
 
         return {
-            "name": item["name"],
-            "ticker": item["ticker"],
-            "category": item.get("category", "Indian Indices"),
-            "prefix": item.get("prefix", ""),
-            "price": curr,
-            "chg": chg,
-            "chg_pct": chg_pct,
-            "history": df["Close"].tail(60)
+            "name": item["name"], "ticker": item["ticker"], "category": item.get("category", "Indian Indices"),
+            "prefix": item.get("prefix", ""), "price": curr, "chg": chg, "chg_pct": chg_pct, "history": df["Close"].tail(60)
         }
-    except Exception:
-        return None
+    except Exception: return None
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_market_overview() -> dict:
@@ -232,8 +131,7 @@ def fetch_market_overview() -> dict:
         futures = {executor.submit(_fetch_single_index, item): item["ticker"] for item in all_items}
         for future in as_completed(futures):
             res = future.result()
-            if res:
-                results[res["ticker"]] = res
+            if res: results[res["ticker"]] = res
     return results
 
 def build_mini_sparkline(series: pd.Series, is_positive: bool, chart_height: int = 75) -> go.Figure:
@@ -241,25 +139,16 @@ def build_mini_sparkline(series: pd.Series, is_positive: bool, chart_height: int
     fill_color = "rgba(22, 163, 74, 0.12)" if is_positive else "rgba(220, 38, 38, 0.12)"
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=list(range(len(series))),
-        y=series.values,
-        mode="lines",
-        line=dict(color=line_color, width=2),
-        fill="tozeroy",
-        fillcolor=fill_color,
+        x=list(range(len(series))), y=series.values, mode="lines",
+        line=dict(color=line_color, width=2), fill="tozeroy", fillcolor=fill_color,
         hovertemplate="%{y:,.2f}<extra></extra>"
     ))
     y_min, y_max = float(series.min()), float(series.max())
     pad = (y_max - y_min) * 0.08 if y_max != y_min else 1.0
     fig.update_layout(
-        height=chart_height,
-        margin=dict(l=0, r=0, t=4, b=0),
-        xaxis=dict(visible=False, fixedrange=True),
-        yaxis=dict(visible=False, range=[y_min - pad, y_max + pad], fixedrange=True),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        showlegend=False,
-        hovermode="x"
+        height=chart_height, margin=dict(l=0, r=0, t=4, b=0),
+        xaxis=dict(visible=False, fixedrange=True), yaxis=dict(visible=False, range=[y_min - pad, y_max + pad], fixedrange=True),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x"
     )
     return fig
 
@@ -276,15 +165,13 @@ def render_market_card(col, data: dict, key_suffix: str, is_fs: bool = False):
 
         st.markdown(f"""
         <div class="mkt-card">
-            <div class="mkt-header">
-                <span>{data['name']}</span>
-                <span class="{cls}">{fmt_chg}</span>
-            </div>
+            <div class="mkt-header"><span>{data['name']}</span><span class="{cls}">{fmt_chg}</span></div>
             <div class="mkt-price">{fmt_price}</div>
         </div>
         """, unsafe_allow_html=True)
         fig = build_mini_sparkline(data["history"], is_pos, chart_height=130 if is_fs else 75)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=f"spark_{data['ticker']}_{key_suffix}_{is_fs}")
+
 # ---------------------------------------------------------
 # TECHNICAL ENGINE (MOVING AVERAGES, INDICATORS, PIVOTS)
 # ---------------------------------------------------------
@@ -296,33 +183,23 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     return 100 - (100 / (1 + rs))
-
 def evaluate_timeframe(df: pd.DataFrame) -> dict:
-    if df is None or len(df) < 30:
-        return None
-
-    close = df["Close"]
-    high = df["High"]
-    low = df["Low"]
+    if df is None or len(df) < 30: return None
+    close, high, low = df["Close"], df["High"], df["Low"]
     volume = df["Volume"] if "Volume" in df.columns else pd.Series(1000, index=df.index)
     curr_price = float(close.iloc[-1])
 
     ma_periods = [5, 10, 20, 50, 100, 200]
-    ma_buy, ma_sell = 0, 0
-    ma_details = []
-
+    ma_buy, ma_sell, ma_details = 0, 0, []
     for p in ma_periods:
         sma_val = float(close.rolling(p).mean().iloc[-1]) if len(close) >= p else float(close.mean())
         ema_val = float(close.ewm(span=p, adjust=False).mean().iloc[-1]) if len(close) >= p else float(close.mean())
-        sma_sig = "Buy" if curr_price > sma_val else "Sell"
-        ema_sig = "Buy" if curr_price > ema_val else "Sell"
+        sma_sig, ema_sig = ("Buy" if curr_price > sma_val else "Sell"), ("Buy" if curr_price > ema_val else "Sell")
         ma_buy += (1 if sma_sig == "Buy" else 0) + (1 if ema_sig == "Buy" else 0)
         ma_sell += (1 if sma_sig == "Sell" else 0) + (1 if ema_sig == "Sell" else 0)
         ma_details.append({"Period": f"MA{p}", "SMA": round(sma_val, 2), "SMA_Action": sma_sig, "EMA": round(ema_val, 2), "EMA_Action": ema_sig})
 
-    ind_buy, ind_sell, ind_neut = 0, 0, 0
-    ind_details = []
-
+    ind_buy, ind_sell, ind_neut, ind_details = 0, 0, 0, []
     rsi_series = compute_rsi(close, 14)
     rsi_val = float(rsi_series.iloc[-1])
     if 55 < rsi_val < 75: rsi_act = "Buy"; ind_buy += 1
@@ -332,19 +209,17 @@ def evaluate_timeframe(df: pd.DataFrame) -> dict:
     else: rsi_act = "Neutral"; ind_neut += 1
     ind_details.append({"Indicator": "RSI (14)", "Value": round(rsi_val, 2), "Action": rsi_act})
 
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
+    ema12, ema26 = close.ewm(span=12, adjust=False).mean(), close.ewm(span=26, adjust=False).mean()
     macd_line = ema12 - ema26
     signal_line = macd_line.ewm(span=9, adjust=False).mean()
-    macd_val = float(macd_line.iloc[-1])
-    sig_val = float(signal_line.iloc[-1])
+    macd_hist = macd_line - signal_line
+    macd_val, sig_val = float(macd_line.iloc[-1]), float(signal_line.iloc[-1])
     macd_act = "Buy" if macd_val > sig_val else "Sell"
     if macd_act == "Buy": ind_buy += 1
     else: ind_sell += 1
     ind_details.append({"Indicator": "MACD (12,26)", "Value": round(macd_val, 2), "Action": macd_act})
 
-    low14 = low.rolling(14).min()
-    high14 = high.rolling(14).max()
+    low14, high14 = low.rolling(14).min(), high.rolling(14).max()
     stoch_k = 100 * (close - low14) / (high14 - low14).replace(0, np.nan)
     stoch_val = float(stoch_k.rolling(3).mean().iloc[-1])
     if 50 < stoch_val < 80: st_act = "Buy"; ind_buy += 1
@@ -380,52 +255,34 @@ def evaluate_timeframe(df: pd.DataFrame) -> dict:
     else: ind_sell += 1
     ind_details.append({"Indicator": "Bull/Bear Power (13)", "Value": round(bbp_val, 2), "Action": bbp_act})
 
-    bb_mid = close.rolling(20).mean()
-    bb_std = close.rolling(20).std()
-    bb_upper = bb_mid + 2 * bb_std
-    bb_lower = bb_mid - 2 * bb_std
+    bb_mid, bb_std = close.rolling(20).mean(), close.rolling(20).std()
+    bb_upper, bb_lower = bb_mid + 2 * bb_std, bb_mid - 2 * bb_std
     bb_act = "Buy" if curr_price > float(bb_mid.iloc[-1]) else "Sell"
     if bb_act == "Buy": ind_buy += 1
     else: ind_sell += 1
     ind_details.append({"Indicator": "Bollinger (20,2)", "Value": round(float(bb_mid.iloc[-1]), 2), "Action": bb_act})
 
-    total_buy = ma_buy + ind_buy
-    total_sell = ma_sell + ind_sell
-    total_signals = total_buy + total_sell + ind_neut
-    net_score = ((total_buy - total_sell) / max(total_signals, 1)) * 100
+    ema20, ema50, ema200 = close.ewm(span=20, adjust=False).mean(), close.ewm(span=50, adjust=False).mean(), close.ewm(span=200, adjust=False).mean()
+    total_signals = ma_buy + ma_sell + ind_buy + ind_sell + ind_neut
+    net_score = ((ma_buy + ind_buy) - (ma_sell + ind_sell)) / max(total_signals, 1) * 100
 
-    if net_score >= 45: signal = "STRONG BUY"
-    elif net_score >= 15: signal = "BUY"
-    elif net_score <= -45: signal = "STRONG SELL"
-    elif net_score <= -15: signal = "SELL"
-    else: signal = "NEUTRAL"
-
-    prev_h = float(high.iloc[-2])
-    prev_l = float(low.iloc[-2])
-    prev_c = float(close.iloc[-2])
-    pp = (prev_h + prev_l + prev_c) / 3.0
-    rng = prev_h - prev_l
+    signal = "STRONG BUY" if net_score >= 45 else ("BUY" if net_score >= 15 else ("STRONG SELL" if net_score <= -45 else ("SELL" if net_score <= -15 else "NEUTRAL")))
+    prev_h, prev_l, prev_c = float(high.iloc[-2]), float(low.iloc[-2]), float(close.iloc[-2])
+    pp, rng = (prev_h + prev_l + prev_c) / 3.0, prev_h - prev_l
 
     pivots = pd.DataFrame([
         {"Level": "R3", "Classic": round(prev_h + 2 * (pp - prev_l), 2), "Fibonacci": round(pp + 1.000 * rng, 2)},
-        {"Level": "R2", "Classic": round(pp + rng, 2),                  "Fibonacci": round(pp + 0.618 * rng, 2)},
-        {"Level": "R1", "Classic": round(2 * pp - prev_l, 2),           "Fibonacci": round(pp + 0.382 * rng, 2)},
-        {"Level": "Pivot Point", "Classic": round(pp, 2),               "Fibonacci": round(pp, 2)},
-        {"Level": "S1", "Classic": round(2 * pp - prev_h, 2),           "Fibonacci": round(pp - 0.382 * rng, 2)},
-        {"Level": "S2", "Classic": round(pp - rng, 2),                  "Fibonacci": round(pp - 0.618 * rng, 2)},
-        {"Level": "S3", "Classic": round(prev_l - 2 * (prev_h - pp), 2),"Fibonacci": round(pp - 1.000 * rng, 2)},
+        {"Level": "R2", "Classic": round(pp + rng, 2), "Fibonacci": round(pp + 0.618 * rng, 2)},
+        {"Level": "R1", "Classic": round(2 * pp - prev_l, 2), "Fibonacci": round(pp + 0.382 * rng, 2)},
+        {"Level": "Pivot Point", "Classic": round(pp, 2), "Fibonacci": round(pp, 2)},
+        {"Level": "S1", "Classic": round(2 * pp - prev_h, 2), "Fibonacci": round(pp - 0.382 * rng, 2)},
+        {"Level": "S2", "Classic": round(pp - rng, 2), "Fibonacci": round(pp - 0.618 * rng, 2)},
+        {"Level": "S3", "Classic": round(prev_l - 2 * (prev_h - pp), 2), "Fibonacci": round(pp - 1.000 * rng, 2)},
     ])
 
-    return {
-        "price": curr_price, "rsi": round(rsi_val, 2), "signal": signal, "score": round(net_score, 1),
-        "ma_buy": ma_buy, "ma_sell": ma_sell, "ind_buy": ind_buy, "ind_sell": ind_sell,
-        "ma_details": pd.DataFrame(ma_details), "ind_details": pd.DataFrame(ind_details), "pivots": pivots,
-        "df": df.assign(BB_Mid=bb_mid, BB_Upper=bb_upper, BB_Lower=bb_lower, RSI=rsi_series, Volume=volume)
-    }
+    enriched_df = df.assign(BB_Mid=bb_mid, BB_Upper=bb_upper, BB_Lower=bb_lower, EMA_20=ema20, EMA_50=ema50, EMA_200=ema200, RSI=rsi_series, MACD=macd_line, MACD_Sig=signal_line, MACD_Hist=macd_hist, Volume=volume)
+    return {"price": curr_price, "rsi": round(rsi_val, 2), "signal": signal, "score": round(net_score, 1), "ma_buy": ma_buy, "ma_sell": ma_sell, "ind_buy": ind_buy, "ind_sell": ind_sell, "ma_details": pd.DataFrame(ma_details), "ind_details": pd.DataFrame(ind_details), "pivots": pivots, "df": enriched_df}
 
-# ---------------------------------------------------------
-# MULTI-TIMEFRAME DATA FETCHER & ALIGNMENT ENGINE
-# ---------------------------------------------------------
 @st.cache_data(ttl=180, show_spinner=False)
 def analyze_single_stock(ticker: str) -> dict:
     tf_results = {}
@@ -437,52 +294,30 @@ def analyze_single_stock(ticker: str) -> dict:
             res = evaluate_timeframe(df)
             if res: tf_results[tf_key] = res
         except Exception: continue
-
     if "1d" not in tf_results: return None
 
-    d1 = tf_results["1d"]
-    df_1d = d1["df"]
+    d1, df_1d = tf_results["1d"], tf_results["1d"]["df"]
     prev_close = float(df_1d["Close"].iloc[-2]) if len(df_1d) > 1 else d1["price"]
     chg_pct = ((d1["price"] - prev_close) / prev_close) * 100
-
-    weights = {"15m": 0.15, "1h": 0.25, "1d": 0.35, "1wk": 0.25}
-    weighted_score = 0.0
-    total_w = 0.0
-    buy_tf_count = 0
-    sell_tf_count = 0
-
-    for k, w in weights.items():
+    weighted_score, total_w, buy_tf, sell_tf = 0.0, 0.0, 0, 0
+    for k, w in {"15m": 0.15, "1h": 0.25, "1d": 0.35, "1wk": 0.25}.items():
         if k in tf_results:
-            sc = tf_results[k]["score"]
-            sig = tf_results[k]["signal"]
-            weighted_score += sc * w
-            total_w += w
-            if "BUY" in sig: buy_tf_count += 1
-            elif "SELL" in sig: sell_tf_count += 1
-
+            weighted_score += tf_results[k]["score"] * w; total_w += w
+            if "BUY" in tf_results[k]["signal"]: buy_tf += 1
+            elif "SELL" in tf_results[k]["signal"]: sell_tf += 1
     final_score = round(weighted_score / max(total_w, 0.01), 1)
-
-    if final_score >= 40 and buy_tf_count >= 3: master_signal = "STRONG BUY"
-    elif final_score >= 12: master_signal = "BUY"
-    elif final_score <= -40 and sell_tf_count >= 3: master_signal = "STRONG SELL"
-    elif final_score <= -12: master_signal = "SELL"
-    else: master_signal = "NEUTRAL"
+    master_signal = "STRONG BUY" if final_score >= 40 and buy_tf >= 3 else ("BUY" if final_score >= 12 else ("STRONG SELL" if final_score <= -40 and sell_tf >= 3 else ("SELL" if final_score <= -12 else "NEUTRAL")))
 
     atr = float((df_1d["High"] - df_1d["Low"]).rolling(14).mean().iloc[-1])
-    if "BUY" in master_signal:
-        stop_loss = round(d1["price"] - 1.5 * atr, 2); target = round(d1["price"] + 3.0 * atr, 2)
-    elif "SELL" in master_signal:
-        stop_loss = round(d1["price"] + 1.5 * atr, 2); target = round(d1["price"] - 3.0 * atr, 2)
-    else:
-        stop_loss = round(d1["price"] - 1.5 * atr, 2); target = round(d1["price"] + 1.5 * atr, 2)
+    entry_price = round(d1["price"], 2)
+    is_sell = "SELL" in master_signal
+    trade_side = "SELL" if is_sell else ("BUY" if "BUY" in master_signal else "NEUTRAL (BUY BIAS)")
+    stop_loss = round(entry_price + 1.5 * atr if is_sell else entry_price - 1.5 * atr, 2)
+    t1 = round(entry_price - 1.5 * atr if is_sell else entry_price + 1.5 * atr, 2)
+    t2 = round(entry_price - 3.0 * atr if is_sell else entry_price + 3.0 * atr, 2)
+    t3 = round(entry_price - 4.5 * atr if is_sell else entry_price + 4.5 * atr, 2)
 
-    return {
-        "Ticker": ticker.replace(".NS", ""), "FullTicker": ticker, "Close": round(d1["price"], 2),
-        "Chg %": round(chg_pct, 2), "RSI (14)": d1["rsi"],
-        "15m": tf_results.get("15m", {}).get("signal", "N/A"), "1h": tf_results.get("1h", {}).get("signal", "N/A"),
-        "1d": tf_results.get("1d", {}).get("signal", "N/A"), "1wk": tf_results.get("1wk", {}).get("signal", "N/A"),
-        "Master Signal": master_signal, "Score": final_score, "Stop Loss": stop_loss, "Target": target, "tf_data": tf_results
-    }
+    return {"Ticker": ticker.replace(".NS", ""), "FullTicker": ticker, "Close": entry_price, "Chg %": round(chg_pct, 2), "RSI (14)": d1["rsi"], "15m": tf_results.get("15m", {}).get("signal", "N/A"), "1h": tf_results.get("1h", {}).get("signal", "N/A"), "1d": tf_results.get("1d", {}).get("signal", "N/A"), "1wk": tf_results.get("1wk", {}).get("signal", "N/A"), "Master Signal": master_signal, "Score": final_score, "Trade Side": trade_side, "Entry": entry_price, "Stop Loss": stop_loss, "Target 1": t1, "Target 2": t2, "Target 3": t3, "tf_data": tf_results}
 
 @st.cache_data(ttl=180, show_spinner=False)
 def scan_all_equities(tickers: list) -> list:
@@ -494,322 +329,159 @@ def scan_all_equities(tickers: list) -> list:
             if res: results.append(res)
     return results
 
-def get_signal_css(signal: str) -> str:
-    s = signal.upper()
-    if s == "STRONG BUY": return "sig-strong-buy"
-    if s == "BUY": return "sig-buy"
-    if s == "STRONG SELL": return "sig-strong-sell"
-    if s == "SELL": return "sig-sell"
-    return "sig-neutral"
+def get_signal_css(s: str) -> str:
+    s = s.upper()
+    return "sig-strong-buy" if s=="STRONG BUY" else ("sig-buy" if s=="BUY" else ("sig-strong-sell" if s=="STRONG SELL" else ("sig-sell" if s=="SELL" else "sig-neutral")))
 
 def style_dataframe(df: pd.DataFrame):
     def color_cell(val):
         v = str(val).upper()
-        if v == "STRONG BUY": return "background-color: #15803d; color: white; font-weight: bold;"
-        elif v == "BUY": return "background-color: #22c55e; color: white; font-weight: bold;"
-        elif v == "STRONG SELL": return "background-color: #b91c1c; color: white; font-weight: bold;"
-        elif v == "SELL": return "background-color: #ef4444; color: white; font-weight: bold;"
-        elif v == "NEUTRAL": return "background-color: #64748b; color: white;"
-        return ""
-    signal_cols = [c for c in ["15m", "1h", "1d", "1wk", "Master Signal"] if c in df.columns]
-    return df.style.map(color_cell, subset=signal_cols).format({
-        "Close": "₹{:.2f}", "Chg %": "{:+.2f}%", "RSI (14)": "{:.1f}", "Score": "{:+.1f}",
-        "Stop Loss": "₹{:.2f}", "Target": "₹{:.2f}"
-    })
+        return "background-color: #15803d; color: white; font-weight: bold;" if v=="STRONG BUY" else ("background-color: #22c55e; color: white; font-weight: bold;" if v=="BUY" else ("background-color: #b91c1c; color: white; font-weight: bold;" if v=="STRONG SELL" else ("background-color: #ef4444; color: white; font-weight: bold;" if v=="SELL" else ("background-color: #64748b; color: white;" if v=="NEUTRAL" else ""))))
+    cols = [c for c in ["15m", "1h", "1d", "1wk", "Master Signal"] if c in df.columns]
+    return df.style.map(color_cell, subset=cols).format({"Close": "₹{:.2f}", "Chg %": "{:+.2f}%", "RSI (14)": "{:.1f}", "Score": "{:+.1f}", "Stop Loss": "₹{:.2f}", "Target": "₹{:.2f}"})
 
-# ---------------------------------------------------------
-# MODULAR SECTION RENDERERS (WITH MAXIMIZE / MINIMIZE TOGGLE)
-# ---------------------------------------------------------
-def render_section_header(title: str, section_key: str):
-    is_fs = (st.session_state.fullscreen_section == section_key)
+def render_section_header(title: str, sec_key: str):
+    is_fs = (st.session_state.fullscreen_section == sec_key)
     h_col, btn_col = st.columns([6, 1.4])
-    with h_col:
-        st.markdown(f'<div class="section-header-box">{title}</div>', unsafe_allow_html=True)
+    with h_col: st.markdown(f'<div class="section-header-box">{title}</div>', unsafe_allow_html=True)
     with btn_col:
-        btn_label = "🗗 Minimize" if is_fs else "⛶ Full Screen"
-        st.button(
-            btn_label,
-            key=f"btn_fs_{section_key}",
-            on_click=toggle_fullscreen,
-            args=(section_key,),
-            use_container_width=True
-        )
+        st.button("🗗 Minimize" if is_fs else "⛶ Full Screen", key=f"btn_fs_{sec_key}", on_click=toggle_fullscreen, args=(sec_key,), use_container_width=True)
 
 def render_market_overview_section(is_fs: bool = False):
     render_section_header("Market Overview — Indian Indices & Global Markets", "market_overview")
-    market_overview_data = fetch_market_overview()
-
+    data = fetch_market_overview()
     st.markdown("**Indian Benchmark Indices**")
-    ind_cols = st.columns(4)
-    for idx, item in enumerate(INDIAN_INDICES):
-        render_market_card(ind_cols[idx], market_overview_data.get(item["ticker"]), f"in_{idx}", is_fs=is_fs)
-
+    cols = st.columns(4)
+    for idx, item in enumerate(INDIAN_INDICES): render_market_card(cols[idx], data.get(item["ticker"]), f"in_{idx}", is_fs=is_fs)
     st.markdown("---")
-    hdr_col1, hdr_col2 = st.columns([1.2, 2.8])
-    with hdr_col1:
-        st.markdown("**Global Markets, Commodities & Crypto**")
-    with hdr_col2:
-        asset_filter = st.radio(
-            "Select Global Asset Class",
-            ["All Global Assets", "US Indices", "Commodities", "Crypto & Forex"],
-            horizontal=True,
-            label_visibility="collapsed",
-            key=f"asset_filter_{is_fs}"
-        )
+    c1, c2 = st.columns([1.2, 2.8])
+    with c1: st.markdown("**Global Markets, Commodities & Crypto**")
+    with c2: filter = st.radio("Select Global Asset Class", ["All Global Assets", "US Indices", "Commodities", "Crypto & Forex"], horizontal=True, label_visibility="collapsed", key=f"asset_filter_{is_fs}")
+    filtered = [g for g in GLOBAL_ASSETS if filter == "All Global Assets" or g["category"] == filter]
+    for start in range(0, len(filtered), 4):
+        row = filtered[start:start+4]; g_cols = st.columns(len(row))
+        for idx, item in enumerate(row): render_market_card(g_cols[idx], data.get(item["ticker"]), f"gl_{start}_{idx}", is_fs=is_fs)
 
-    filtered_global = [
-        g for g in GLOBAL_ASSETS
-        if asset_filter == "All Global Assets" or g["category"] == asset_filter
-    ]
+def render_screener_section(df_f: pd.DataFrame, is_fs: bool = False):
+    render_section_header(f"Scanner Results ({len(df_f)} Equities)", "screener_table")
+    cols = ["Ticker", "Close", "Chg %", "RSI (14)", "15m", "1h", "1d", "1wk", "Master Signal", "Score"] + (["Stop Loss", "Target"] if is_fs else [])
+    st.dataframe(style_dataframe(df_f[cols]), use_container_width=True, height=780 if is_fs else 650, hide_index=True)
 
-    for row_start in range(0, len(filtered_global), 4):
-        row_items = filtered_global[row_start:row_start + 4]
-        g_cols = st.columns(len(row_items))
-        for idx, item in enumerate(row_items):
-            render_market_card(g_cols[idx], market_overview_data.get(item["ticker"]), f"gl_{row_start}_{idx}", is_fs=is_fs)
-
-def render_screener_section(df_filtered: pd.DataFrame, is_fs: bool = False):
-    render_section_header(f"Scanner Results ({len(df_filtered)} Equities)", "screener_table")
-    display_cols = ["Ticker", "Close", "Chg %", "RSI (14)", "15m", "1h", "1d", "1wk", "Master Signal", "Score"]
-    if is_fs:
-        display_cols = ["Ticker", "Close", "Chg %", "RSI (14)", "15m", "1h", "1d", "1wk", "Master Signal", "Score", "Stop Loss", "Target"]
-    st.dataframe(
-        style_dataframe(df_filtered[display_cols]),
-        use_container_width=True,
-        height=780 if is_fs else 650,
-        hide_index=True
-    )
-
-def render_matrix_and_chart_section(df_filtered: pd.DataFrame, df_all: pd.DataFrame, data_map: dict, primary_tf: str, is_fs: bool = False):
+def render_matrix_and_chart_section(df_f: pd.DataFrame, df_all: pd.DataFrame, data_map: dict, primary_tf: str, is_fs: bool = False):
     render_section_header("Multi-Timeframe Confluence Matrix & Technical Chart", "confluence_matrix")
+    options = df_f["Ticker"].tolist() if not df_f.empty else df_all["Ticker"].tolist()
+    sel = st.selectbox("Select Equity for Deep Technical Analysis", options, index=0, key=f"ticker_select_{is_fs}")
+    obj = data_map[sel]; tf_d = obj["tf_data"]; act_d = tf_d.get(primary_tf, tf_d["1d"])
+    st.markdown(f"### {sel} — ₹{obj['Close']:.2f} ({obj['Chg %']:+.2f}%)")
 
-    ticker_options = df_filtered["Ticker"].tolist() if not df_filtered.empty else df_all["Ticker"].tolist()
-    selected_ticker = st.selectbox(
-        "Select Equity for Deep Technical Analysis",
-        ticker_options,
-        index=0,
-        key=f"ticker_select_{is_fs}"
-    )
-    stock_obj = data_map[selected_ticker]
-    tf_dict = stock_obj["tf_data"]
-    active_tf_data = tf_dict.get(primary_tf, tf_dict["1d"])
-
-    st.markdown(f"### {selected_ticker} — ₹{stock_obj['Close']:.2f} ({stock_obj['Chg %']:+.2f}%)")
-
-    # 1. MULTI-TIMEFRAME ALIGNMENT CARDS (MATRIX)
     tf_cols = st.columns(4)
-    for idx, (tf_k, tf_meta) in enumerate(TIMEFRAMES.items()):
-        sig_txt = tf_dict[tf_k]["signal"] if tf_k in tf_dict else "N/A"
-        css_cls = get_signal_css(sig_txt)
-        with tf_cols[idx]:
-            st.markdown(f"""
-            <div class="tf-card {css_cls}">
-                <div class="tf-title">{tf_meta['label']} ({tf_k})</div>
-                <div>{sig_txt}</div>
-            </div>
-            """, unsafe_allow_html=True)
+    for idx, (tk, tm) in enumerate(TIMEFRAMES.items()):
+        s_txt = tf_d[tk]["signal"] if tk in tf_d else "N/A"
+        with tf_cols[idx]: st.markdown(f'<div class="tf-card {get_signal_css(s_txt)}"><div class="tf-title">{tm["label"]} ({tk})</div><div>{s_txt}</div></div>', unsafe_allow_html=True)
 
-    master_sig = stock_obj["Master Signal"]
-    master_css = get_signal_css(master_sig)
-    st.markdown(f"""
-    <div class="summary-banner {master_css}">
-        MASTER SIGNAL: {master_sig} (Confidence Score: {stock_obj['Score']:+.1f})
-    </div>
-    """, unsafe_allow_html=True)
+    msig = obj["Master Signal"]
+    st.markdown(f'<div class="summary-banner {get_signal_css(msig)}">MASTER SIGNAL: {msig} (Confidence Score: {obj["Score"]:+.1f})</div>', unsafe_allow_html=True)
 
-    t1, t2, t3 = st.columns(3)
-    t1.metric("Current Price", f"₹{stock_obj['Close']:.2f}")
-    t2.metric("ATR Stop Loss", f"₹{stock_obj['Stop Loss']:.2f}")
-    t3.metric("ATR Target (1:2)", f"₹{stock_obj['Target']:.2f}")
+    t1, t2, t3, t4, t5 = st.columns(5)
+    t1.metric(f"{obj['Trade Side']} Entry", f"₹{obj['Entry']:.2f}")
+    t2.metric("Stop Loss", f"₹{obj['Stop Loss']:.2f}"); t3.metric("Target 1", f"₹{obj['Target 1']:.2f}")
+    t4.metric("Target 2", f"₹{obj['Target 2']:.2f}"); t5.metric("Target 3", f"₹{obj['Target 3']:.2f}")
 
-    tab_summary, tab_chart, tab_details = st.tabs(["Technical Summary & Pivots", "Interactive Chart", "Indicator Breakdown"])
-
-    with tab_summary:
-        st.markdown(f"**Technical Summary ({TIMEFRAMES[primary_tf]['label']})**")
-        sum_df = pd.DataFrame([
-            {
-                "Category": "Moving Averages (12)",
-                "Summary": "Strong Buy" if active_tf_data["ma_buy"] >= 9 else ("Buy" if active_tf_data["ma_buy"] > active_tf_data["ma_sell"] else ("Strong Sell" if active_tf_data["ma_sell"] >= 9 else "Sell")),
-                "Buy": active_tf_data["ma_buy"],
-                "Sell": active_tf_data["ma_sell"]
-            },
-            {
-                "Category": "Technical Indicators (8)",
-                "Summary": "Strong Buy" if active_tf_data["ind_buy"] >= 6 else ("Buy" if active_tf_data["ind_buy"] > active_tf_data["ind_sell"] else ("Strong Sell" if active_tf_data["ind_sell"] >= 6 else "Sell")),
-                "Buy": active_tf_data["ind_buy"],
-                "Sell": active_tf_data["ind_sell"]
-            }
-        ])
-        st.dataframe(sum_df, use_container_width=True, hide_index=True)
-
-        st.markdown(f"**Pivot Points ({TIMEFRAMES[primary_tf]['label']})**")
-        st.dataframe(active_tf_data["pivots"], use_container_width=True, hide_index=True)
-
+    tab_chart, tab_sum, tab_det = st.tabs(["Interactive Chart", "Technical Summary & Pivots", "Indicator Breakdown"])
     with tab_chart:
-        plot_df = active_tf_data["df"].tail(120 if is_fs else 80)
+        pdf = act_d["df"].tail(120 if is_fs else 80)
+        s_bb, s_ema, s_vol, s_rsi, s_macd, s_trd, s_piv = st.session_state.ind_bb, st.session_state.ind_ema, st.session_state.ind_vol, st.session_state.ind_rsi, st.session_state.ind_macd, st.session_state.ind_trades, st.session_state.ind_pivots
+        active_panels = [p for p, flag in [("vol", s_vol), ("rsi", s_rsi), ("macd", s_macd)] if flag]
+        tot_rows = 1 + len(active_panels)
+        rh = [1.0] if tot_rows==1 else ([0.75, 0.25] if tot_rows==2 else [0.62, 0.19, 0.19])
+        fig = make_subplots(rows=tot_rows, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=rh)
+        fig.add_trace(go.Candlestick(x=pdf.index, open=pdf["Open"], high=pdf["High"], low=pdf["Low"], close=pdf["Close"], name="Price", increasing_line_color="#16a34a", decreasing_line_color="#dc2626"), row=1, col=1)
 
-        fig = make_subplots(
-            rows=2, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.03,
-            row_heights=[0.70, 0.30]
-        )
+        if s_bb:
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf["BB_Upper"], line=dict(color="rgba(59,130,246,0.45)", width=1), name="BB Upper"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf["BB_Mid"], line=dict(color="#f59e0b", width=1.2), name="BB Mid"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf["BB_Lower"], line=dict(color="rgba(59,130,246,0.45)", width=1), fill="tonexty", fillcolor="rgba(59,130,246,0.05)", name="BB Lower"), row=1, col=1)
+        if s_ema:
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf["EMA_20"], line=dict(color="#06b6d4", width=1.4), name="EMA 20"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf["EMA_50"], line=dict(color="#8b5cf6", width=1.5), name="EMA 50"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf["EMA_200"], line=dict(color="#ec4899", width=1.8), name="EMA 200"), row=1, col=1)
+        if s_trd:
+            is_sl = (obj["Trade Side"] == "SELL")
+            tlines = [(obj["Entry"], "#dc2626" if is_sl else "#2563eb", "solid", f"{'SELL' if is_sl else 'BUY'} ENTRY: ₹{obj['Entry']:.2f}"),
+                      (obj["Stop Loss"], "#ef4444", "dash", f"SL: ₹{obj['Stop Loss']:.2f}"), (obj["Target 1"], "#22c55e", "dot", f"T1: ₹{obj['Target 1']:.2f}"),
+                      (obj["Target 2"], "#16a34a", "dash", f"T2: ₹{obj['Target 2']:.2f}"), (obj["Target 3"], "#15803d", "dashdot", f"T3: ₹{obj['Target 3']:.2f}")]
+            for p, c, d, txt in tlines: fig.add_hline(y=p, line_width=1.4, line_dash=d, line_color=c, annotation_text=txt, annotation_position="top left", annotation_font=dict(size=10, color=c, family="Arial Black"), row=1, col=1)
+        if s_piv:
+            for _, r in act_d["pivots"].iterrows():
+                if r["Level"] in ["R2", "R1", "S1", "S2"]: fig.add_hline(y=r["Classic"], line_width=1, line_dash="dot", line_color="#f97316", annotation_text=f"{r['Level']}: ₹{r['Classic']}", annotation_position="bottom right", annotation_font=dict(size=9, color="#f97316"), row=1, col=1)
 
-        fig.add_trace(go.Candlestick(
-            x=plot_df.index,
-            open=plot_df["Open"],
-            high=plot_df["High"],
-            low=plot_df["Low"],
-            close=plot_df["Close"],
-            name="Price",
-            increasing_line_color="#16a34a",
-            decreasing_line_color="#dc2626"
-        ), row=1, col=1)
+        cur = 2
+        for p in active_panels:
+            if p == "vol":
+                fig.add_trace(go.Bar(x=pdf.index, y=pdf["Volume"], marker_color=["#16a34a" if r["Close"]>=r["Open"] else "#dc2626" for _, r in pdf.iterrows()], opacity=0.65, name="Volume"), row=cur, col=1)
+                fig.update_yaxes(title_text="Vol", title_font=dict(size=10), row=cur, col=1)
+            elif p == "rsi":
+                fig.add_trace(go.Scatter(x=pdf.index, y=pdf["RSI"], line=dict(color="#7c3aed", width=1.6), name="RSI"), row=cur, col=1)
+                fig.add_hline(y=70, line_dash="dash", line_width=1, line_color="#dc2626", row=cur, col=1); fig.add_hline(y=30, line_dash="dash", line_width=1, line_color="#16a34a", row=cur, col=1)
+                fig.update_yaxes(title_text="RSI", range=[0, 100], title_font=dict(size=10), row=cur, col=1)
+            elif p == "macd":
+                fig.add_trace(go.Bar(x=pdf.index, y=pdf["MACD_Hist"], marker_color=["#16a34a" if v>=0 else "#dc2626" for v in pdf["MACD_Hist"]], opacity=0.6, name="Hist"), row=cur, col=1)
+                fig.add_trace(go.Scatter(x=pdf.index, y=pdf["MACD"], line=dict(color="#2563eb", width=1.4), name="MACD"), row=cur, col=1); fig.add_trace(go.Scatter(x=pdf.index, y=pdf["MACD_Sig"], line=dict(color="#f97316", width=1.4), name="Sig"), row=cur, col=1)
+                fig.update_yaxes(title_text="MACD", title_font=dict(size=10), row=cur, col=1)
+            cur += 1
 
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["BB_Upper"], line=dict(color="rgba(59,130,246,0.3)", width=1), name="BB Upper"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["BB_Mid"], line=dict(color="#f59e0b", width=1.2), name="20 SMA"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["BB_Lower"], line=dict(color="rgba(59,130,246,0.3)", width=1), fill="tonexty", fillcolor="rgba(59,130,246,0.04)", name="BB Lower"), row=1, col=1)
+        fig.update_layout(height=(680 if is_fs else 520) + max(0, (tot_rows-2)*90), margin=dict(l=10, r=10, t=15, b=10), xaxis_rangeslider_visible=False, template="plotly_white", showlegend=False, hovermode="x unified")
+        fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0"); fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0")
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True, "responsive": True}, key=f"mc_{sel}_{primary_tf}_{is_fs}_{s_bb}_{s_ema}_{s_vol}_{s_rsi}_{s_macd}_{s_trd}_{s_piv}")
+        st.markdown('<div class="tv-toolbar-label">Chart Indicators & Trade Levels Toolbar (Click to Add / Remove)</div>', unsafe_allow_html=True)
+        tb_cols = st.columns(7)
+        t_items = [("ind_bb", "BB"), ("ind_ema", "EMA 20/50/200"), ("ind_vol", "Volume"), ("ind_rsi", "RSI (14)"), ("ind_macd", "MACD"), ("ind_trades", "Buy/Sell & T1-T3"), ("ind_pivots", "Pivots")]
+        for idx, (sk, lbl) in enumerate(t_items):
+            act = st.session_state[sk]
+            with tb_cols[idx]: st.button(f"{'✓ ' if act else '+ '}{lbl}", key=f"tb_{sk}_{is_fs}", on_click=toggle_chart_indicator, args=(sk,), type="primary" if act else "secondary", use_container_width=True)
 
-        vol_colors = ["#16a34a" if row["Close"] >= row["Open"] else "#dc2626" for _, row in plot_df.iterrows()]
-        fig.add_trace(go.Bar(
-            x=plot_df.index,
-            y=plot_df["Volume"],
-            marker_color=vol_colors,
-            name="Volume",
-            opacity=0.6
-        ), row=2, col=1)
+    with tab_sum:
+        st.markdown(f"**Technical Summary ({TIMEFRAMES[primary_tf]['label']})**")
+        st.dataframe(pd.DataFrame([{"Category": "Moving Averages (12)", "Summary": "Strong Buy" if act_d["ma_buy"]>=9 else ("Buy" if act_d["ma_buy"]>act_d["ma_sell"] else ("Strong Sell" if act_d["ma_sell"]>=9 else "Sell")), "Buy": act_d["ma_buy"], "Sell": act_d["ma_sell"]}, {"Category": "Technical Indicators (8)", "Summary": "Strong Buy" if act_d["ind_buy"]>=6 else ("Buy" if act_d["ind_buy"]>act_d["ind_sell"] else ("Strong Sell" if act_d["ind_sell"]>=6 else "Sell")), "Buy": act_d["ind_buy"], "Sell": act_d["ind_sell"]}]), use_container_width=True, hide_index=True)
+        st.markdown(f"**Pivot Points ({TIMEFRAMES[primary_tf]['label']})**")
+        st.dataframe(act_d["pivots"], use_container_width=True, hide_index=True)
+    with tab_det:
+        c1, c2 = st.columns(2)
+        with c1: st.markdown("**Moving Averages Detail**"); st.dataframe(act_d["ma_details"], use_container_width=True, hide_index=True)
+        with c2: st.markdown("**Oscillators & Trend Detail**"); st.dataframe(act_d["ind_details"], use_container_width=True, hide_index=True)
 
-        fig.update_layout(
-            height=680 if is_fs else 520,
-            margin=dict(l=10, r=10, t=10, b=10),
-            xaxis_rangeslider_visible=False,
-            template="plotly_white",
-            showlegend=False,
-            hovermode="x unified"
-        )
-
-        fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0")
-        fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0")
-
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True, "responsive": True}, key=f"main_chart_{selected_ticker}_{primary_tf}_{is_fs}")
-
-    with tab_details:
-        c_ma, c_ind = st.columns(2)
-        with c_ma:
-            st.markdown("**Moving Averages Detail**")
-            st.dataframe(active_tf_data["ma_details"], use_container_width=True, hide_index=True)
-        with c_ind:
-            st.markdown("**Oscillators & Trend Detail**")
-            st.dataframe(active_tf_data["ind_details"], use_container_width=True, hide_index=True)
-
-# ---------------------------------------------------------
-# SIDEBAR CONTROLS
-# ---------------------------------------------------------
 with st.sidebar:
     st.header("Scanner Parameters")
-    primary_tf = st.selectbox("Chart & Detail Timeframe", ["1d", "1h", "15m", "1wk"], index=0)
-    view_mode = st.radio(
-        "Screener Ranking Mode",
-        ["All Scanned Equities", "Top 25 Buy Signals", "Top 25 Sell Signals"],
-        index=0
-    )
-    signal_filter = st.multiselect(
-        "Filter Master Signals",
-        ["STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"],
-        default=["STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"]
-    )
-    st.markdown("---")
-    st.markdown("**Quick View Layout**")
-    if st.session_state.fullscreen_section is not None:
-        st.button("🗗 Exit Full Screen Mode", on_click=toggle_fullscreen, args=(st.session_state.fullscreen_section,), use_container_width=True)
-    if st.button("Refresh Live Market Data", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
+    prim_tf = st.selectbox("Chart & Detail Timeframe", ["1d", "1h", "15m", "1wk"], index=0)
+    v_mode = st.radio("Screener Ranking Mode", ["All Scanned Equities", "Top 25 Buy Signals", "Top 25 Sell Signals"], index=0)
+    s_filt = st.multiselect("Filter Master Signals", ["STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"], default=["STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"])
+    st.markdown("---"); st.markdown("**Quick View Layout**")
+    if st.session_state.fullscreen_section is not None: st.button("🗗 Exit Full Screen Mode", on_click=toggle_fullscreen, args=(st.session_state.fullscreen_section,), use_container_width=True)
+    if st.button("Refresh Live Market Data", use_container_width=True): st.cache_data.clear(); st.rerun()
 
-# ---------------------------------------------------------
-# TOP HEADER & BLINKING LIVE MARKET BADGE
-# ---------------------------------------------------------
-st.markdown("""
-<div class="top-bar-container">
-    <div class="app-main-title">ULTRA ACCURACY MARKET TERMINAL</div>
-    <div class="live-badge"><span class="live-dot"></span>LIVE MARKET</div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown('<div class="top-bar-container"><div class="app-main-title">ULTRA ACCURACY MARKET TERMINAL</div><div class="live-badge"><span style="height:10px;width:10px;background:#fff;border-radius:50%;display:inline-block;margin-right:8px;box-shadow:0 0 8px #fff;"></span>LIVE MARKET</div></div>', unsafe_allow_html=True)
+with st.spinner("Scanning Nifty 50 with Ultra Accuracy Engine..."): r_data = scan_all_equities(NIFTY_50)
+if not r_data: st.error("Unable to fetch live market data."); st.stop()
 
-# ---------------------------------------------------------
-# EXECUTE NIFTY 50 SCAN & COMPUTE MARKET METRICS
-# ---------------------------------------------------------
-with st.spinner("Scanning Nifty 50 with Ultra Accuracy Engine..."):
-    raw_data = scan_all_equities(NIFTY_50)
+df_all = pd.DataFrame([{k: v for k, v in i.items() if k != "tf_data"} for i in r_data]); d_map = {i["Ticker"]: i for i in r_data}
+df_f = df_all[df_all["Score"] > 0].sort_values(by="Score", ascending=False).head(25) if v_mode=="Top 25 Buy Signals" else (df_all[df_all["Score"] < 0].sort_values(by="Score", ascending=True).head(25) if v_mode=="Top 25 Sell Signals" else df_all[df_all["Master Signal"].isin(s_filt)].sort_values(by="Score", ascending=False))
 
-if not raw_data:
-    st.error("Unable to fetch live market data.")
-    st.stop()
-
-df_all = pd.DataFrame([{k: v for k, v in item.items() if k != "tf_data"} for item in raw_data])
-data_map = {item["Ticker"]: item for item in raw_data}
-
-if view_mode == "Top 25 Buy Signals":
-    df_filtered = df_all[df_all["Score"] > 0].sort_values(by="Score", ascending=False).head(25)
-elif view_mode == "Top 25 Sell Signals":
-    df_filtered = df_all[df_all["Score"] < 0].sort_values(by="Score", ascending=True).head(25)
+af_sec = st.session_state.fullscreen_section
+if af_sec is not None:
+    st.markdown(f'<div class="fs-active-banner"><span>FULL SCREEN MODE ACTIVE: {{"market_overview": "MARKET OVERVIEW", "screener_table": "SCANNER RESULTS TABLE", "confluence_matrix": "MULTI-TIMEFRAME CONFLUENCE MATRIX & CHART"}}.get(af_sec, "")</span><span>Click 'Minimize' to restore full dashboard layout</span></div>', unsafe_allow_html=True)
+    if af_sec=="market_overview": render_market_overview_section(is_fs=True)
+    elif af_sec=="screener_table": render_screener_section(df_f, is_fs=True)
+    elif af_sec=="confluence_matrix": render_matrix_and_chart_section(df_f, df_all, d_map, prim_tf, is_fs=True)
 else:
-    df_filtered = df_all[df_all["Master Signal"].isin(signal_filter)].sort_values(by="Score", ascending=False)
-
-# ---------------------------------------------------------
-# ROUTING: FULL-SCREEN EXPANDED VIEW VS STANDARD DASHBOARD
-# ---------------------------------------------------------
-active_fs = st.session_state.fullscreen_section
-
-if active_fs is not None:
-    fs_labels = {
-        "market_overview": "MARKET OVERVIEW",
-        "screener_table": "SCANNER RESULTS TABLE",
-        "confluence_matrix": "MULTI-TIMEFRAME CONFLUENCE MATRIX & CHART"
-    }
-    st.markdown(f"""
-    <div class="fs-active-banner">
-        <span>FULL SCREEN MODE ACTIVE: {fs_labels.get(active_fs, '')}</span>
-        <span>Click 'Minimize' to restore full dashboard layout</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if active_fs == "market_overview":
-        render_market_overview_section(is_fs=True)
-    elif active_fs == "screener_table":
-        render_screener_section(df_filtered, is_fs=True)
-    elif active_fs == "confluence_matrix":
-        render_matrix_and_chart_section(df_filtered, df_all, data_map, primary_tf, is_fs=True)
-
-else:
-    # 1. MARKET OVERVIEW SECTION
-    with st.container(border=True):
-        render_market_overview_section(is_fs=False)
-
+    with st.container(border=True): render_market_overview_section(is_fs=False)
     st.markdown("---")
-
-    # 2. KPI SUMMARY METRICS
-    strong_buy_cnt = len(df_all[df_all["Master Signal"] == "STRONG BUY"])
-    buy_cnt = len(df_all[df_all["Master Signal"].isin(["STRONG BUY", "BUY"])])
-    strong_sell_cnt = len(df_all[df_all["Master Signal"].isin(["STRONG SELL"])])
-    sell_cnt = len(df_all[df_all["Master Signal"].isin(["STRONG SELL", "SELL"])])
-    avg_rsi = round(df_all["RSI (14)"].mean(), 1)
-
+    sb_cnt, b_cnt, ss_cnt, s_cnt, arsi = len(df_all[df_all["Master Signal"]=="STRONG BUY"]), len(df_all[df_all["Master Signal"].isin(["STRONG BUY", "BUY"])]), len(df_all[df_all["Master Signal"]=="STRONG SELL"]), len(df_all[df_all["Master Signal"].isin(["STRONG SELL", "SELL"])]), round(df_all["RSI (14)"].mean(), 1)
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Scanned Equities", f"{len(df_all)} / 50")
-    k2.metric("Buy Setups (Strong)", f"{buy_cnt} ({strong_buy_cnt})")
-    k3.metric("Sell Setups (Strong)", f"{sell_cnt} ({strong_sell_cnt})")
-    k4.metric("Avg Market RSI (14)", f"{avg_rsi}")
-
+    k1.metric("Scanned Equities", f"{len(df_all)} / 50"); k2.metric("Buy Setups (Strong)", f"{b_cnt} ({sb_cnt})")
+    k3.metric("Sell Setups (Strong)", f"{s_cnt} ({ss_cnt})"); k4.metric("Avg Market RSI (14)", f"{arsi}")
     st.markdown("---")
-
-    # 3. MAIN WORKSPACE: LEFT SCREENER TABLE | RIGHT MATRIX & CHART PANEL
-    left_col, right_col = st.columns([1.2, 1.4], gap="large")
-
-    with left_col:
-        with st.container(border=True):
-            render_screener_section(df_filtered, is_fs=False)
-
-    with right_col:
-        with st.container(border=True):
-            render_matrix_and_chart_section(df_filtered, df_all, data_map, primary_tf, is_fs=False)
+    lc, rc = st.columns([1.2, 1.4], gap="large")
+    with lc:
+        with st.container(border=True): render_screener_section(df_f, is_fs=False)
+    with rc:
+        with st.container(border=True): render_matrix_and_chart_section(df_f, df_all, d_map, prim_tf, is_fs=False)
