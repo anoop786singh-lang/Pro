@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 st.set_page_config(
-    page_title="TradingView Pro — Institutional Top-Down Terminal",
+    page_title="Market Master Pro — Institutional Terminal",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -120,7 +120,7 @@ def get_ohlcv(symbol: str, tf: str) -> pd.DataFrame:
             "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"
         }).dropna()
     elif tf == "1h":
-        df = yf.download(symbol, period="180d", interval="1h", progress=False)
+        df = yf.download(symbol, periods="180d", interval="1h", progress=False)
     elif tf == "2h":
         raw = yf.download(symbol, period="365d", interval="1h", progress=False)
         if isinstance(raw.columns, pd.MultiIndex):
@@ -285,13 +285,6 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
 
     # Single-Bar Rejection Patterns: Hammer / Shooting Star / Doji
     if lw0 >= b0 * 2.0 and uw0 <= b0 * 0.4 and b0 > r0 * 0.12:
-        return {"name": "Hammer", "bias": 1.05:
-        return {"name": "Bullish Engulfing", "bias": 2, "short": "BullEng"}
-    if bull1 and (not bull0) and cl0 <= o1 and o0 >= cl1 and b0 > b1 * 1.05:
-        return {"name": "Bearish Engulfing", "bias": -2, "short": "BearEng"}
-
-    # Single-Bar Rejection Patterns: Hammer / Shooting Star / Doji
-    if lw0 >= b0 * 2.0 and uw0 <= b0 * 0.4 and b0 > r0 * 0.12:
         return {"name": "Hammer", "bias": 1, "short": "Hammer"}
     if uw0 >= b0 * 2.0 and lw0 <= b0 * 0.4 and b0 > r0 * 0.12:
         return {"name": "Shooting Star", "bias": -1, "short": "ShootStar"}
@@ -301,14 +294,7 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
     return {"name": "None", "bias": 0, "short": "—"}
 
 def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
-    """
-    Evaluates a single timeframe combining:
-    1. Moving Average Ribbon (EMA9, EMA20, EMA50, SMA200)
-    2. Refined RSI (zone + RSI-MA crossover slope)
-    3. Support/Resistance proximity & breakout structure
-    4. Candlestick Pattern polarity
-    5. Top-Down Macro Alignment multiplier
-    """
+    """ Evaluates a single timeframe combining all custom indicators. """
     if df.empty or len(df) < 26:
         return {
             "signal": "NEUTRAL", "css": "sig-neutral", "badge_col": "#787b86",
@@ -333,13 +319,13 @@ def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
 
     raw_score = 0.0
 
-    # 1. Moving Average Stack (Max ±3.5)
+    # 1. Moving Average Stack
     raw_score += 1.0 if close > ema20 else -1.0
     raw_score += 1.0 if ema20 > ema50 else -1.0
     raw_score += 0.75 if ema9 > ema20 else -0.75
     raw_score += 0.75 if close > sma200 else -0.75
 
-    # 2. Refined RSI + Momentum Slope + MACD (Max ±3.0)
+    # 2. Refined RSI + Momentum Slope + MACD
     if rsi >= 62 and rsi > rsi_ma:
         raw_score += 2.0
     elif rsi >= 53:
@@ -350,28 +336,24 @@ def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
         raw_score -= 1.0
     raw_score += 1.0 if macd > macd_sig else -1.0
 
-    # 3. Support / Resistance Structural Proximity (Max ±2.0)
+    # 3. Support / Resistance Structural Proximity
     dist_to_sup = close - sr["support"]
     dist_to_res = sr["resistance"] - close
     sr_tag = "Mid"
     if 0 <= dist_to_sup <= 0.8 * atr:
-        # Bouncing near support
         raw_score += 1.5 if candle["bias"] >= 0 else -0.5
         sr_tag = "Near S1"
     elif dist_to_sup < 0:
-        # Support breakdown
         raw_score -= 1.5
         sr_tag = "Broke S1"
     elif 0 <= dist_to_res <= 0.8 * atr:
-        # Testing resistance
         raw_score += 1.5 if (candle["bias"] > 0 and rsi > 60) else -1.0
         sr_tag = "At R1"
     elif dist_to_res < 0:
-        # Resistance breakout
         raw_score += 2.0
         sr_tag = "Broke R1"
 
-    # 4. Candlestick Pattern Confirmation (Max ±2.0)
+    # 4. Candlestick Pattern Confirmation
     raw_score += float(candle["bias"])
 
     # 5. Top-Down Macro Regime Alignment Multiplier
@@ -394,7 +376,6 @@ def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
     return {"signal": "NEUTRAL", "css": "sig-neutral", "badge_col": "#787b86", "score": score, "rsi": round(rsi, 1), "pattern": candle["short"], "sr_tag": sr_tag, "sr": sr, "candle_full": candle["name"]}
 
 def run_top_down_analysis(symbol: str) -> dict:
-    """Executes strict Top-Down hierarchy: 1mo -> 1wk -> 1d -> 4h -> 2h -> 1h -> 45m -> 30m -> 15m."""
     df_1mo = get_ohlcv(symbol, "1mo")
     df_1wk = get_ohlcv(symbol, "1wk")
     df_1d = get_ohlcv(symbol, "1d")
@@ -402,13 +383,11 @@ def run_top_down_analysis(symbol: str) -> dict:
     res_1mo = evaluate_timeframe_signal(df_1mo, macro_bias=0)
     res_1wk = evaluate_timeframe_signal(df_1wk, macro_bias=1 if res_1mo["score"] > 1 else (-1 if res_1mo["score"] < -1 else 0))
 
-    # Higher-Timeframe Macro Regime Bias derived from Monthly + Weekly + Daily structure
     htf_raw = res_1mo["score"] * 0.45 + res_1wk["score"] * 0.55
     macro_bias = 1 if htf_raw >= 1.5 else (-1 if htf_raw <= -1.5 else 0)
 
     res_1d = evaluate_timeframe_signal(df_1d, macro_bias=macro_bias)
 
-    # Combined Institutional Top-Down Bias for Intraday Timeframes
     td_score = res_1mo["score"] * 0.30 + res_1wk["score"] * 0.40 + res_1d["score"] * 0.30
     intraday_bias = 1 if td_score >= 1.8 else (-1 if td_score <= -1.8 else 0)
 
@@ -417,7 +396,6 @@ def run_top_down_analysis(symbol: str) -> dict:
         df_tf = get_ohlcv(symbol, tf)
         results[tf] = evaluate_timeframe_signal(df_tf, macro_bias=intraday_bias)
 
-    # Top-Down Weighted Composite Master Score
     weights = {
         "1mo": 0.16, "1wk": 0.18, "1d": 0.20,
         "4h": 0.14, "2h": 0.10, "1h": 0.09,
@@ -559,7 +537,7 @@ mtf_results = td_analysis["mtf"]
 # Top Toolbar
 top_l, top_r1, top_r2, top_r3 = st.columns([3.5, 1.1, 1.1, 0.9])
 with top_r1:
-    chart_tf = st.selectbox("Interval", options=CHART_TIMEFRAMES, index=5)  # Default 1d
+    chart_tf = st.selectbox("Interval", options=CHART_TIMEFRAMES, index=5)
 with top_r2:
     chart_style = st.selectbox("Style", options=["Candles", "Hollow Candles", "Line"], index=0)
 with top_r3:
@@ -614,7 +592,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- DEDICATED TOP SECTION: MULTI-TIMEFRAME SIGNAL CARDS (15m TO 1mo) ---
+# --- DEDICATED TOP SECTION: MULTI-TIMEFRAME SIGNAL CARDS ---
 tf_cols = st.columns(len(ALL_TIMEFRAMES) + 1)
 for idx, tf in enumerate(ALL_TIMEFRAMES):
     r = mtf_results[tf]
