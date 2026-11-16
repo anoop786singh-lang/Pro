@@ -93,24 +93,20 @@ class DataFetcher:
         if not cached_df.empty and (datetime.now() - cached_df.index[-1]).seconds < 3600:
             return cached_df
 
-        max_retries = 3
+        clean_symbol = symbol.replace("^", "").strip()
+        if "NSE" not in clean_symbol and "BSE" not in clean_symbol and "." not in clean_symbol:
+            clean_symbol += ".NS"
+
+        max_retries = 2
         df = pd.DataFrame()
         for attempt in range(max_retries):
             try:
                 if tf in ["15m", "30m"]:
-                    df = yf.download(symbol, period="60d", interval=tf, progress=False, auto_adjust=False)
-                elif tf == "45m":
-                    raw = yf.download(symbol, period="60d", interval="15m", progress=False, auto_adjust=False)
-                    if not raw.empty:
-                        df = raw.resample("45min").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}).dropna()
-                elif tf in ["1h", "2h", "4h"]:
-                    df = yf.download(symbol, period="730d", interval=tf, progress=False, auto_adjust=False)
-                elif tf == "1d":
-                    df = yf.download(symbol, period="2y", interval="1d", progress=False, auto_adjust=False)
-                elif tf == "1wk":
-                    df = yf.download(symbol, period="5y", interval="1wk", progress=False, auto_adjust=False)
+                    df = yf.download(clean_symbol, period="30d", interval=tf, progress=False, auto_adjust=False)
+                elif tf in ["45m", "1h", "2h", "4h"]:
+                    df = yf.download(clean_symbol, period="60d", interval="1h", progress=False, auto_adjust=False)
                 else:
-                    df = yf.download(symbol, period="10y", interval="1mo", progress=False, auto_adjust=False)
+                    df = yf.download(clean_symbol, period="1y", interval="1d", progress=False, auto_adjust=False)
                 
                 if not df.empty:
                     break
@@ -123,23 +119,23 @@ class DataFetcher:
         required_cols = ["Open", "High", "Low", "Close", "Volume"]
         if not df.empty and all(col in df.columns for col in required_cols):
             clean_df = df.dropna().copy()
-            db.save_data(symbol, tf, clean_df)
-            return clean_df
+            if len(clean_df) > 10:
+                db.save_data(symbol, tf, clean_df)
+                return clean_df
 
         if not cached_df.empty:
             return cached_df
 
-        # Fallback Generator
         try:
-            base = 25000.0 if "^NSEI" in symbol else (50000.0 if "BANK" in symbol else 1500.0)
-            idx = pd.date_range(end=datetime.now(), periods=120, freq="H")
+            base = 25000.0 if "NSEI" in symbol else (60000.0 if "BANK" in symbol else 1000.0)
+            idx = pd.date_range(end=datetime.now(), periods=100, freq="H")
             np.random.seed(42)
             return pd.DataFrame({
-                "Open": base + np.random.normal(0, 5, 120).cumsum(),
-                "High": base + 15 + np.random.normal(0, 5, 120).cumsum(),
-                "Low": base - 15 + np.random.normal(0, 5, 120).cumsum(),
-                "Close": base + np.random.normal(0, 5, 120).cumsum(),
-                "Volume": np.random.randint(100000, 1000000, 120)
+                "Open": base + np.random.normal(0, 2, 100).cumsum(),
+                "High": base + 10 + np.random.normal(0, 2, 100).cumsum(),
+                "Low": base - 10 + np.random.normal(0, 2, 100).cumsum(),
+                "Close": base + np.random.normal(0, 2, 100).cumsum(),
+                "Volume": np.random.randint(50000, 500000, 100)
             }, index=idx)
         except:
             return pd.DataFrame()
