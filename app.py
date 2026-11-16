@@ -23,7 +23,7 @@ if "focus_mode" not in st.session_state:
     st.session_state.focus_mode = False
 
 # -----------------------------------------------------------------------------
-# CSS: STICKY TOP HEADER, FOCUS MODE & DIRECT CHART PINCH-ZOOM SUPPORT
+# CSS: STICKY TOP HEADER, FLOATING IN-CHART CONTROLS & PINCH-ZOOM SUPPORT
 # -----------------------------------------------------------------------------
 focus_css = (
     """
@@ -57,6 +57,40 @@ st.markdown(
             padding-top: 6px;
             padding-bottom: 8px;
             border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+        }}
+        /* Floating overlay bar positioned directly over the top-left of the Plotly chart */
+        div[data-testid="stVerticalBlock"] > div:has(div.chart-overlay-anchor) {{
+            position: relative;
+            z-index: 50;
+            margin-bottom: -58px;
+            padding-left: 14px;
+            padding-top: 10px;
+            pointer-events: none;
+        }}
+        div[data-testid="stVerticalBlock"] > div:has(div.chart-overlay-anchor) div[data-testid="stSelectbox"],
+        div[data-testid="stVerticalBlock"] > div:has(div.chart-overlay-anchor) .floating-chart-badge {{
+            pointer-events: auto;
+        }}
+        div[data-testid="stVerticalBlock"] > div:has(div.chart-overlay-anchor) div[data-baseweb="select"] > div {{
+            background-color: rgba(255, 255, 255, 0.92) !important;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(49, 51, 63, 0.25) !important;
+            min-height: 32px !important;
+            height: 32px !important;
+            font-size: 0.82rem !important;
+            font-weight: 600 !important;
+        }}
+        .floating-chart-badge {{
+            display: inline-flex;
+            align-items: center;
+            height: 32px;
+            padding: 0 10px;
+            border-radius: 6px;
+            color: #ffffff;
+            font-size: 0.78rem;
+            font-weight: 700;
+            white-space: nowrap;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
         }}
         /* Route touch pinch-zoom & pan gestures directly to Plotly canvas */
         .js-plotly-plot .plotly .nsewdrag,
@@ -115,6 +149,7 @@ TIMEFRAME_MAP = {
 
 TF_WEIGHTS = {"15M": 1, "30M": 1, "45M": 1, "1H": 2, "2H": 2, "4H": 2, "1D": 3, "1WK": 3, "1MO": 4}
 MAX_POSSIBLE_WEIGHTED_SCORE = sum(3 * w for w in TF_WEIGHTS.values())  # 63
+
 
 # -----------------------------------------------------------------------------
 # TECHNICAL INDICATORS, CONFLUENCE & ACCURACY ENGINE
@@ -519,8 +554,13 @@ with st.sidebar:
 # -----------------------------------------------------------------------------
 # PERSISTENT STICKY TOP NAVIGATION & INTEGRATED CHART CONTROLS
 # -----------------------------------------------------------------------------
-dropdown_tickers = active_universe_names if st.session_state.selected_ticker in active_universe_names else [st.session_state.selected_ticker] + active_universe_names
+dropdown_tickers = (
+    active_universe_names
+    if st.session_state.selected_ticker in active_universe_names
+    else [st.session_state.selected_ticker] + active_universe_names
+)
 curr_idx = dropdown_tickers.index(st.session_state.selected_ticker)
+tf_keys = list(TIMEFRAME_MAP.keys())
 
 sticky_header = st.container()
 with sticky_header:
@@ -539,6 +579,7 @@ with sticky_header:
             "Active Symbol",
             dropdown_tickers,
             index=curr_idx,
+            key="top_nav_symbol",
             label_visibility="collapsed",
         )
         if selected_stock != st.session_state.selected_ticker:
@@ -551,11 +592,11 @@ with sticky_header:
             st.rerun()
 
     with nav_tf:
-        tf_keys = list(TIMEFRAME_MAP.keys())
         selected_tf = st.selectbox(
             "Timeframe",
             tf_keys,
             index=tf_keys.index(st.session_state.selected_tf),
+            key="top_nav_tf",
             label_visibility="collapsed",
         )
         if selected_tf != st.session_state.selected_tf:
@@ -623,7 +664,7 @@ show_fib = t5_col.toggle("Auto Fib", value=False)
 bars_option = t6_col.selectbox("Bars", ["120", "250", "500", "ALL (Max History)"], index=1, label_visibility="collapsed")
 
 # -----------------------------------------------------------------------------
-# INTERACTIVE CANDLESTICK CHART WITH PERSISTENT TRADE LEVELS & LIVE BADGE
+# INTERACTIVE CANDLESTICK CHART WITH FLOATING CONTROLS & LIVE BADGE
 # -----------------------------------------------------------------------------
 if not chart_df.empty:
     plot_df = chart_df.copy() if bars_option.startswith("ALL") else chart_df.tail(int(bars_option)).copy()
@@ -640,6 +681,45 @@ if not chart_df.empty:
         lv3.metric("TARGET 1 (T1)", f"{levels['t1']:,.2f}")
         lv4.metric("TARGET 2 (T2)", f"{levels['t2']:,.2f}")
         lv5.metric("Position Size (Qty)", f"{qty:,} units")
+
+    # Persistent Floating Control Bar embedded directly over the top-left of the chart canvas
+    badge_bg = "#198754" if "BUY" in tf_signal else ("#dc3545" if "SELL" in tf_signal else "#495057")
+    floating_ctrl = st.container()
+    with floating_ctrl:
+        st.markdown('<div class="chart-overlay-anchor"></div>', unsafe_allow_html=True)
+        ov_sym_col, ov_tf_col, ov_badge_col, _ = st.columns([1.45, 0.85, 1.85, 5.85])
+
+        with ov_sym_col:
+            ov_selected_stock = st.selectbox(
+                "Chart Stock",
+                dropdown_tickers,
+                index=curr_idx,
+                key="chart_overlay_symbol",
+                label_visibility="collapsed",
+            )
+            if ov_selected_stock != st.session_state.selected_ticker:
+                st.session_state.selected_ticker = ov_selected_stock
+                st.rerun()
+
+        with ov_tf_col:
+            ov_selected_tf = st.selectbox(
+                "Chart Timeframe",
+                tf_keys,
+                index=tf_keys.index(st.session_state.selected_tf),
+                key="chart_overlay_tf",
+                label_visibility="collapsed",
+            )
+            if ov_selected_tf != st.session_state.selected_tf:
+                st.session_state.selected_tf = ov_selected_tf
+                st.rerun()
+
+        with ov_badge_col:
+            st.markdown(
+                f'<div class="floating-chart-badge" style="background-color: {badge_bg};">'
+                f"{tf_signal} ({tf_acc}%)"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
     rows_count = 1 + int(show_vol) + int(show_rsi)
     row_heights = [0.64]
@@ -733,24 +813,6 @@ if not chart_df.empty:
                 row=1,
                 col=1,
             )
-
-    badge_bg = "#198754" if "BUY" in tf_signal else ("#dc3545" if "SELL" in tf_signal else "#495057")
-    fig.add_annotation(
-        xref="paper",
-        yref="paper",
-        x=0.01,
-        y=0.98,
-        xanchor="left",
-        yanchor="top",
-        text=f"<b>{st.session_state.selected_ticker} ({st.session_state.selected_tf})</b>  |  <b>{tf_signal}</b> ({tf_acc}%)",
-        showarrow=False,
-        font=dict(color="#ffffff", size=12),
-        bgcolor=badge_bg,
-        bordercolor=badge_bg,
-        borderwidth=4,
-        borderpad=5,
-        opacity=0.92,
-    )
 
     current_row = 2
     if show_vol:
