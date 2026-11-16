@@ -8,16 +8,6 @@ from settings import settings
 
 st.set_page_config(page_title=settings.PROJECT_NAME, layout="wide")
 
-NSE_SCANNER_UNIVERSE = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
-    "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS", "KOTAKBANK.NS",
-    "AXISBANK.NS", "HINDUNILVR.NS", "BAJFINANCE.NS", "MARUTI.NS",
-    "SUNPHARMA.NS", "TATAMOTORS.NS", "TITAN.NS", "NTPC.NS",
-    "POWERGRID.NS", "ULTRACEMCO.NS", "ASIANPAINT.NS", "WIPRO.NS",
-    "HCLTECH.NS", "ADANIENT.NS", "ADANIPORTS.NS", "ONGC.NS",
-    "COALINDIA.NS", "JSWSTEEL.NS", "TATASTEEL.NS", "M&M.NS",
-]
-
 
 def style_signal_cell(val: str) -> str:
     v = str(val).upper().strip()
@@ -94,9 +84,10 @@ def evaluate_bb_and_breakout_confluence(
 
 
 @st.cache_data(ttl=180, show_spinner=False)
-def run_nse_topdown_scanner(exec_tf: str) -> pd.DataFrame:
+def run_scanner_universe(exec_tf: str) -> pd.DataFrame:
     rows = []
-    for sym in NSE_SCANNER_UNIVERSE:
+    for item in settings.CORE_WATCHLIST:
+        sym = item["symbol"]
         raw = fetch_all_timeframes(sym)
         if not raw or exec_tf not in raw or raw[exec_tf].empty:
             continue
@@ -123,9 +114,10 @@ def run_nse_topdown_scanner(exec_tf: str) -> pd.DataFrame:
             else "None"
         )
 
+        display_sym = sym.replace(".NS", "")
         rows.append(
             {
-                "Stock": sym.replace(".NS", ""),
+                "Stock": display_sym,
                 "LTP": master["entry"],
                 "Master Signal": m_sig,
                 "Conf %": master["confidence_score"],
@@ -176,12 +168,14 @@ risk_pct = st.sidebar.slider(
     "Max Risk Per Trade (%)", 0.5, 5.0, settings.MAX_RISK_PER_TRADE_PCT
 )
 
-# Fetch Data
+# Fetch Data safely handling suffix
 raw_data = fetch_all_timeframes(st.session_state.active_symbol)
 mtf_results = {tf: evaluate_timeframe(df) for tf, df in raw_data.items()}
 
 if not raw_data or all(df.empty for df in raw_data.values()):
-    st.error("Unable to fetch data for ticker.")
+    st.error(
+        f"Unable to fetch data for ticker: {st.session_state.active_symbol}."
+    )
     st.stop()
 
 master = compute_master_and_risk(
@@ -193,13 +187,19 @@ st.markdown("### Active Instrument & View")
 top_c1, top_c2, top_c3, top_c4 = st.columns([2, 1.5, 2.5, 4])
 
 with top_c1:
-    inline_ticker = st.text_input(
+    display_watch = {
+        item["symbol"].replace(".NS", ""): item["symbol"]
+        for item in settings.CORE_WATCHLIST
+    }
+    selected_disp = st.selectbox(
         "Switch Ticker",
-        value=st.session_state.active_symbol.replace(".NS", ""),
-        help="Type symbol and press Enter",
-    ).upper()
-    if inline_ticker and f"{inline_ticker}.NS" != st.session_state.active_symbol:
-        st.session_state.active_symbol = f"{inline_ticker}.NS"
+        options=list(display_watch.keys()),
+        index=list(display_watch.values()).index(
+            st.session_state.active_symbol
+        ),
+    )
+    if display_watch[selected_disp] != st.session_state.active_symbol:
+        st.session_state.active_symbol = display_watch[selected_disp]
         st.rerun()
 
 with top_c2:
@@ -233,7 +233,7 @@ scan_tab1, scan_tab2, scan_tab3 = st.tabs(
 )
 
 with scan_tab1:
-    scanner_df = run_nse_topdown_scanner(st.session_state.active_tf)
+    scanner_df = run_scanner_universe(st.session_state.active_tf)
     sig_cols = ["Master Signal", "1WK", "1D", "1H", "15M"]
     if scanner_df.empty:
         st.info("No high-accuracy confluence candidates found.")
@@ -258,7 +258,7 @@ with scan_tab1:
             hide_index=True,
         )
         with st.expander(
-            f"Expand Full NSE Scanner Matrix ({len(scanner_df)} Stocks)",
+            f"Expand Full Scanner Matrix ({len(scanner_df)} Symbols)",
             expanded=False,
         ):
             st.dataframe(
@@ -307,7 +307,6 @@ st.divider()
 # --- DYNAMIC CHART CANVAS ---
 st.markdown("### Chart Viewport")
 
-# Inline Panel & Overlay Toggles
 ctrl_c1, ctrl_c2, ctrl_c3, ctrl_c4, ctrl_c5, _ = st.columns(
     [1, 1, 1.2, 1, 1.5, 4]
 )
