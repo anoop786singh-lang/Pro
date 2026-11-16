@@ -169,7 +169,6 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def calculate_dynamic_trade_levels(df: pd.DataFrame, bias_score: float) -> dict:
-    """Calculates dynamic Entry, Stop Loss, and Multi-Targets based on ATR and pivot extremes."""
     if df.empty or "ATR" not in df.columns or np.isnan(df["ATR"].iloc[-1]):
         c = float(df["Close"].iloc[-1]) if not df.empty else 100.0
         return {"entry": c, "sl": c*0.98, "t1": c*1.015, "t2": c*1.03, "t3": c*1.05}
@@ -180,18 +179,17 @@ def calculate_dynamic_trade_levels(df: pd.DataFrame, bias_score: float) -> dict:
     l = float(last["Low"])
     atr = float(last["ATR"])
     
-    # Determine lookback local extremes for tighter stops
     recent_high = float(df["High"].tail(20).max())
     recent_low = float(df["Low"].tail(20).min())
 
-    if bias_score >= 0: # Bullish setup
+    if bias_score >= 0:
         entry = c
         sl = min(l - 0.5 * atr, recent_low)
         risk = c - sl
         t1 = c + risk * 1.0
         t2 = c + risk * 2.0
         t3 = c + risk * 3.0
-    else: # Bearish setup
+    else:
         entry = c
         sl = max(h + 0.5 * atr, recent_high)
         risk = sl - c
@@ -206,8 +204,8 @@ def calculate_dynamic_trade_levels(df: pd.DataFrame, bias_score: float) -> dict:
 
 def detect_support_resistance(df: pd.DataFrame, lookback: int = 80, order: int = 4) -> dict:
     if df.empty or len(df) < order * 2 + 5:
-        close = float(df["Close"].iloc[-1]) if not df.empty else 0.0
-        return {"support": close * 0.98, "resistance": close * 1.02, "s_strength": 1, "r_strength": 1}
+        close = float(df["Close"].iloc[-1]) if not df.empty else 100.0
+        return {"support": round(close * 0.98, 2), "resistance": round(close * 1.02, 2), "s_strength": 1, "r_strength": 1}
 
     sub = df.tail(lookback).copy()
     close = float(sub["Close"].iloc[-1])
@@ -239,6 +237,9 @@ def detect_support_resistance(df: pd.DataFrame, lookback: int = 80, order: int =
     nearest_s = float(sub["Low"].min()) if not sup_clusters else min(sup_clusters, key=lambda x: abs(close - x[0]))
     s_str = 1 if not sup_clusters else min(sup_clusters, key=lambda x: abs(close - x[0]))[1]
 
+    nearest_r = close * 1.02 if np.isnan(nearest_r) else nearest_r
+    nearest_s = close * 0.98 if np.isnan(nearest_s) else nearest_s
+
     return {"support": round(nearest_s, 2), "resistance": round(nearest_r, 2), "s_strength": s_str, "r_strength": r_str}
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
@@ -267,7 +268,12 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
 
 def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
     if df.empty or len(df) < 26:
-        return {"signal": "NEUTRAL", "css": "sig-neutral", "badge_col": "#787b86", "score": 0.0, "rsi": 50.0, "pattern": "—", "sr_tag": "Mid"}
+        close = float(df["Close"].iloc[-1]) if not df.empty else 100.0
+        return {
+            "signal": "NEUTRAL", "css": "sig-neutral", "badge_col": "#787b86", "score": 0.0, "rsi": 50.0, "pattern": "—", "sr_tag": "Mid",
+            "sr": {"support": round(close * 0.98, 2), "resistance": round(close * 1.02, 2)},
+            "levels": {"entry": close, "sl": close*0.98, "t1": close*1.015, "t2": close*1.03, "t3": close*1.05}
+        }
 
     df = compute_indicators(df)
     sr = detect_support_resistance(df)
@@ -484,16 +490,19 @@ if show_ema:
 if show_vwap:
     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["VWAP"], line=dict(color="#e040fb", width=1.5, dash="dot"), name="VWAP"), row=1, col=1)
 
-# Dynamic Trade Levels Overlay
-fig.add_hline(y=active_levels["entry"], line_dash="solid", line_color="#2962ff", line_width=1.5, row=1, col=1, annotation_text=f"ENTRY: {active_levels['entry']}")
-fig.add_hline(y=active_levels["sl"], line_dash="dash", line_color="#f23645", line_width=1.5, row=1, col=1, annotation_text=f"SL: {active_levels['sl']}")
-fig.add_hline(y=active_levels["t1"], line_dash="dot", line_color="#089981", line_width=1.5, row=1, col=1, annotation_text=f"T1: {active_levels['t1']}")
-fig.add_hline(y=active_levels["t2"], line_dash="dot", line_color="#089981", line_width=1.5, row=1, col=1, annotation_text=f"T2: {active_levels['t2']}")
-fig.add_hline(y=active_levels["t3"], line_dash="dot", line_color="#089981", line_width=1.5, row=1, col=1, annotation_text=f"T3: {active_levels['t3']}")
+# Dynamic Trade Levels Overlay with safe fallbacks
+try:
+    fig.add_hline(y=active_levels.get("entry", curr_close), line_dash="solid", line_color="#2962ff", line_width=1.5, row=1, col=1, annotation_text=f"ENTRY: {active_levels.get('entry', curr_close)}")
+    fig.add_hline(y=active_levels.get("sl", curr_close*0.98), line_dash="dash", line_color="#f23645", line_width=1.5, row=1, col=1, annotation_text=f"SL: {active_levels.get('sl', curr_close*0.98)}")
+    fig.add_hline(y=active_levels.get("t1", curr_close*1.015), line_dash="dot", line_color="#089981", line_width=1.5, row=1, col=1, annotation_text=f"T1: {active_levels.get('t1', curr_close*1.015)}")
+    fig.add_hline(y=active_levels.get("t2", curr_close*1.03), line_dash="dot", line_color="#089981", line_width=1.5, row=1, col=1, annotation_text=f"T2: {active_levels.get('t2', curr_close*1.03)}")
+    fig.add_hline(y=active_levels.get("t3", curr_close*1.05), line_dash="dot", line_color="#089981", line_width=1.5, row=1, col=1, annotation_text=f"T3: {active_levels.get('t3', curr_close*1.05)}")
+except Exception as e:
+    pass
 
 if show_sr:
-    fig.add_hline(y=sr_chart["resistance"], line_dash="dash", line_color="#f23645", line_width=1.5, opacity=0.5, row=1, col=1)
-    fig.add_hline(y=sr_chart["support"], line_dash="dash", line_color="#089981", line_width=1.5, opacity=0.5, row=1, col=1)
+    fig.add_hline(y=sr_chart.get("resistance", curr_close*1.02), line_dash="dash", line_color="#f23645", line_width=1.5, opacity=0.5, row=1, col=1)
+    fig.add_hline(y=sr_chart.get("support", curr_close*0.98), line_dash="dash", line_color="#089981", line_width=1.5, opacity=0.5, row=1, col=1)
 
 curr_row = 2
 if show_rsi:
