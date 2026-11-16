@@ -5,48 +5,68 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-st.set_page_config(page_title="TradingView Pro — Indian Markets Terminal", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="TradingView Pro — Indian Markets Terminal",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# --- TRADINGVIEW DARK UI STYLING ---
+# --- TRADINGVIEW DARK UI & RESPONSIVE STYLING ---
 st.markdown("""
 <style>
     .stApp { background-color: #131722; color: #d1d4dc; }
-    section[data-testid="stSidebar"] { background-color: #1e222d; border-right: 1px solid #2a2e39; }
-    .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 100%; }
-    .tv-header {
+    section[data-testid="stSidebar"] {
+        background-color: #1e222d;
+        border-right: 1px solid #2a2e39;
+        min-width: 310px !important;
+        max-width: 340px !important;
+    }
+    .block-container { padding-top: 0.75rem; padding-bottom: 1rem; max-width: 100%; }
+    .tv-topbar {
         display: flex; align-items: center; justify-content: space-between;
         background-color: #1e222d; padding: 10px 16px; border-radius: 6px;
-        border: 1px solid #2a2e39; margin-bottom: 12px;
+        border: 1px solid #2a2e39; margin-bottom: 10px;
     }
     .tv-sym-title { font-size: 1.35rem; font-weight: 700; color: #ffffff; }
-    .tv-price { font-size: 1.35rem; font-weight: 700; margin-left: 14px; }
+    .tv-price { font-size: 1.35rem; font-weight: 700; margin-left: 12px; }
     .mtf-card {
         background-color: #1e222d; border: 1px solid #2a2e39; border-radius: 6px;
-        padding: 10px 8px; text-align: center;
+        padding: 8px 4px; text-align: center; margin-bottom: 6px;
     }
-    .mtf-tf { font-size: 0.75rem; color: #787b86; font-weight: 600; text-transform: uppercase; }
+    .mtf-tf { font-size: 0.72rem; color: #787b86; font-weight: 700; text-transform: uppercase; }
     .mtf-sig {
-        font-size: 0.92rem; font-weight: 700; margin-top: 5px; padding: 3px 6px;
-        border-radius: 4px; display: inline-block; width: 90%;
+        font-size: 0.78rem; font-weight: 700; margin-top: 4px; padding: 3px 4px;
+        border-radius: 4px; display: inline-block; width: 92%;
     }
-    .mtf-meta { font-size: 0.72rem; color: #b2b5be; margin-top: 5px; }
-    .sig-strong-buy { background-color: rgba(8, 153, 129, 0.22); color: #089981; border: 1px solid #089981; }
-    .sig-buy { background-color: rgba(41, 98, 255, 0.22); color: #2962ff; border: 1px solid #2962ff; }
-    .sig-neutral { background-color: rgba(120, 123, 134, 0.22); color: #b2b5be; border: 1px solid #787b86; }
-    .sig-sell { background-color: rgba(242, 54, 69, 0.22); color: #f23645; border: 1px solid #f23645; }
-    .sig-strong-sell { background-color: rgba(183, 28, 28, 0.30); color: #ff5252; border: 1px solid #ff5252; }
-    .watchlist-row {
-        padding: 6px 8px; border-bottom: 1px solid #2a2e39; font-size: 0.82rem;
+    .mtf-meta { font-size: 0.68rem; color: #b2b5be; margin-top: 4px; }
+    .sig-strong-buy { background-color: #089981; color: #ffffff; }
+    .sig-buy { background-color: rgba(8, 153, 129, 0.25); color: #089981; border: 1px solid #089981; }
+    .sig-neutral { background-color: rgba(120, 123, 134, 0.25); color: #d1d4dc; border: 1px solid #787b86; }
+    .sig-sell { background-color: rgba(242, 54, 69, 0.25); color: #f23645; border: 1px solid #f23645; }
+    .sig-strong-sell { background-color: #f23645; color: #ffffff; }
+    div[data-testid="stSidebar"] button {
+        text-align: left !important;
+        justify-content: flex-start !important;
+        padding: 4px 8px !important;
+        font-size: 0.80rem !important;
+        background-color: transparent !important;
+        border: 1px solid transparent !important;
+        color: #d1d4dc !important;
+    }
+    div[data-testid="stSidebar"] button:hover {
+        background-color: #2a2e39 !important;
+        border-color: #363a45 !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- WATCHLIST UNIVERSE (INDIAN INDICES & STOCKS) ---
+# --- WATCHLIST UNIVERSE (INDICES & NIFTY EQUITIES) ---
 WATCHLIST_ITEMS = [
-    {"symbol": "^NSEI", "label": "NIFTY 50", "category": "Indices"},
-    {"symbol": "^NSEBANK", "label": "BANK NIFTY", "category": "Indices"},
+    {"symbol": "^NSEI", "label": "NIFTY", "category": "Indices"},
+    {"symbol": "^NSEBANK", "label": "BANKNIFTY", "category": "Indices"},
     {"symbol": "^BSESN", "label": "SENSEX", "category": "Indices"},
-    {"symbol": "^CNXIT", "label": "NIFTY IT", "category": "Indices"},
+    {"symbol": "^CNXIT", "label": "NIFTYIT", "category": "Indices"},
+    {"symbol": "^INDIAVIX", "label": "INDIAVIX", "category": "Indices"},
     {"symbol": "RELIANCE.NS", "label": "RELIANCE", "category": "Stocks"},
     {"symbol": "TCS.NS", "label": "TCS", "category": "Stocks"},
     {"symbol": "HDFCBANK.NS", "label": "HDFCBANK", "category": "Stocks"},
@@ -63,22 +83,49 @@ WATCHLIST_ITEMS = [
     {"symbol": "KOTAKBANK.NS", "label": "KOTAKBANK", "category": "Stocks"},
     {"symbol": "MARUTI.NS", "label": "MARUTI", "category": "Stocks"},
     {"symbol": "TITAN.NS", "label": "TITAN", "category": "Stocks"},
+    {"symbol": "ADANIENT.NS", "label": "ADANIENT", "category": "Stocks"},
+    {"symbol": "DRREDDY.NS", "label": "DRREDDY", "category": "Stocks"},
+    {"symbol": "TRENT.NS", "label": "TRENT", "category": "Stocks"},
+    {"symbol": "BEL.NS", "label": "BEL", "category": "Stocks"},
 ]
 
-TIMEFRAMES = ["15m", "1h", "4h", "1d", "1wk"]
+ALL_TIMEFRAMES = ["15m", "30m", "45m", "1h", "2h", "4h", "1d", "1wk", "1mo"]
+CHART_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h", "1d", "1wk", "1mo"]
 
 if "active_symbol" not in st.session_state:
     st.session_state.active_symbol = "^NSEI"
 if "active_label" not in st.session_state:
-    st.session_state.active_label = "NIFTY 50"
+    st.session_state.active_label = "NIFTY"
 
-# --- DATA FETCHING & 4H RESAMPLING ---
+# --- DATA FETCHING & MULTI-TIMEFRAME RESAMPLING ---
 @st.cache_data(ttl=180)
 def get_ohlcv(symbol: str, tf: str) -> pd.DataFrame:
     if tf == "15m":
         df = yf.download(symbol, period="30d", interval="15m", progress=False)
+    elif tf == "30m":
+        df = yf.download(symbol, period="60d", interval="30m", progress=False)
+    elif tf == "45m":
+        raw = yf.download(symbol, period="30d", interval="15m", progress=False)
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
+        raw = raw.dropna()
+        if raw.empty:
+            return pd.DataFrame()
+        return raw.resample("45min").agg({
+            "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"
+        }).dropna()
     elif tf == "1h":
         df = yf.download(symbol, period="180d", interval="1h", progress=False)
+    elif tf == "2h":
+        raw = yf.download(symbol, period="365d", interval="1h", progress=False)
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
+        raw = raw.dropna()
+        if raw.empty:
+            return pd.DataFrame()
+        return raw.resample("2h").agg({
+            "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"
+        }).dropna()
     elif tf == "4h":
         raw = yf.download(symbol, period="365d", interval="1h", progress=False)
         if isinstance(raw.columns, pd.MultiIndex):
@@ -86,84 +133,57 @@ def get_ohlcv(symbol: str, tf: str) -> pd.DataFrame:
         raw = raw.dropna()
         if raw.empty:
             return pd.DataFrame()
-        df = raw.resample("4h").agg({
-            "Open": "first",
-            "High": "max",
-            "Low": "min",
-            "Close": "last",
-            "Volume": "sum"
+        return raw.resample("4h").agg({
+            "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"
         }).dropna()
-        return df
     elif tf == "1d":
         df = yf.download(symbol, period="2y", interval="1d", progress=False)
-    else:  # 1wk
+    elif tf == "1wk":
         df = yf.download(symbol, period="5y", interval="1wk", progress=False)
+    else:  # 1mo
+        df = yf.download(symbol, period="10y", interval="1mo", progress=False)
 
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     return df.dropna().copy()
 
-@st.cache_data(ttl=180)
-def get_watchlist_quotes() -> dict:
-    quotes = {}
-    for item in WATCHLIST_ITEMS:
-        sym = item["symbol"]
-        df = get_ohlcv(sym, "1d")
-        if len(df) >= 2:
-            c = float(df["Close"].iloc[-1])
-            p = float(df["Close"].iloc[-2])
-            chg = c - p
-            pct = (chg / p) * 100
-            quotes[sym] = (c, chg, pct)
-        elif len(df) == 1:
-            c = float(df["Close"].iloc[-1])
-            quotes[sym] = (c, 0.0, 0.0)
-        else:
-            quotes[sym] = (0.0, 0.0, 0.0)
-    return quotes
-
-# --- TECHNICAL INDICATORS & SIGNAL SCORING ---
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    # RSI (14)
     delta = df["Close"].diff()
-    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
     rs = gain / loss.replace(0, np.nan)
     df["RSI"] = 100 - (100 / (1 + rs))
 
-    # Moving Averages
     df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
     df["SMA200"] = df["Close"].rolling(200).mean()
 
-    # MACD (12, 26, 9)
     ema12 = df["Close"].ewm(span=12, adjust=False).mean()
     ema26 = df["Close"].ewm(span=26, adjust=False).mean()
     df["MACD"] = ema12 - ema26
     df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
     df["MACD_Hist"] = df["MACD"] - df["MACD_Signal"]
 
-    # Bollinger Bands (20, 2)
     sma20 = df["Close"].rolling(20).mean()
     std20 = df["Close"].rolling(20).std()
     df["BB_Upper"] = sma20 + 2 * std20
     df["BB_Lower"] = sma20 - 2 * std20
 
-    # VWAP (Rolling 20-bar session proxy)
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     vol = df["Volume"].replace(0, np.nan).fillna(1.0)
     df["VWAP"] = (tp * vol).rolling(20).sum() / vol.rolling(20).sum()
 
-    # ATR (14)
-    tr = np.maximum(df["High"] - df["Low"],
-                    np.maximum(abs(df["High"] - df["Close"].shift(1)), abs(df["Low"] - df["Close"].shift(1))))
+    tr = np.maximum(
+        df["High"] - df["Low"],
+        np.maximum(abs(df["High"] - df["Close"].shift(1)), abs(df["Low"] - df["Close"].shift(1))),
+    )
     df["ATR"] = tr.rolling(14).mean()
     return df
 
 def evaluate_timeframe_signal(df: pd.DataFrame) -> dict:
-    if df.empty or len(df) < 26:
-        return {"signal": "NEUTRAL", "css": "sig-neutral", "score": 0, "rsi": 50.0, "trend": "Flat"}
+    if df.empty or len(df) < 20:
+        return {"signal": "NEUTRAL", "css": "sig-neutral", "badge_col": "#787b86", "score": 0, "rsi": 50.0, "trend": "Flat"}
     df = compute_indicators(df)
     last = df.iloc[-1]
     close = float(last["Close"])
@@ -174,167 +194,254 @@ def evaluate_timeframe_signal(df: pd.DataFrame) -> dict:
     macd_sig = float(last["MACD_Signal"])
 
     score = 0
-    # Oscillator points
-    if rsi >= 65: score += 2
-    elif rsi >= 55: score += 1
-    elif rsi <= 35: score -= 2
-    elif rsi <= 45: score -= 1
+    if rsi >= 65:
+        score += 2
+    elif rsi >= 55:
+        score += 1
+    elif rsi <= 35:
+        score -= 2
+    elif rsi <= 45:
+        score -= 1
 
     score += 1 if macd > macd_sig else -1
-    # Trend MA points
     score += 1 if close > ema20 else -1
     score += 1 if close > ema50 else -1
     score += 1 if ema20 > ema50 else -1
 
     if score >= 4:
-        return {"signal": "STRONG BUY", "css": "sig-strong-buy", "score": score, "rsi": round(rsi, 1), "trend": "Bullish"}
+        return {"signal": "STRONG BUY", "css": "sig-strong-buy", "badge_col": "#089981", "score": score, "rsi": round(rsi, 1), "trend": "Bullish"}
     elif score >= 1:
-        return {"signal": "BUY", "css": "sig-buy", "score": score, "rsi": round(rsi, 1), "trend": "Up"}
+        return {"signal": "BUY", "css": "sig-buy", "badge_col": "#2ecc71", "score": score, "rsi": round(rsi, 1), "trend": "Up"}
     elif score <= -4:
-        return {"signal": "STRONG SELL", "css": "sig-strong-sell", "score": score, "rsi": round(rsi, 1), "trend": "Bearish"}
+        return {"signal": "STRONG SELL", "css": "sig-strong-sell", "badge_col": "#f23645", "score": score, "rsi": round(rsi, 1), "trend": "Bearish"}
     elif score <= -1:
-        return {"signal": "SELL", "css": "sig-sell", "score": score, "rsi": round(rsi, 1), "trend": "Down"}
-    return {"signal": "NEUTRAL", "css": "sig-neutral", "score": score, "rsi": round(rsi, 1), "trend": "Range"}
+        return {"signal": "SELL", "css": "sig-sell", "badge_col": "#e74c3c", "score": score, "rsi": round(rsi, 1), "trend": "Down"}
+    return {"signal": "NEUTRAL", "css": "sig-neutral", "badge_col": "#787b86", "score": score, "rsi": round(rsi, 1), "trend": "Range"}
 
-# --- LEFT-HAND TRADINGVIEW WATCHLIST PANEL ---
+@st.cache_data(ttl=180)
+def get_watchlist_snapshot() -> dict:
+    snap = {}
+    for item in WATCHLIST_ITEMS:
+        sym = item["symbol"]
+        df_1d = get_ohlcv(sym, "1d")
+        df_1wk = get_ohlcv(sym, "1wk")
+        df_1m = get_ohlcv(sym, "1mo")
+        df_4h = get_ohlcv(sym, "4h")
+        
+        if len(df_1d) >= 2:
+            c = float(df_1d["Close"].iloc[-1])
+            p = float(df_1d["Close"].iloc[-2])
+            chg = c - p
+            pct = (chg / p) * 100
+            
+            s_1d = evaluate_timeframe_signal(df_1d)["score"]
+            s_1wk = evaluate_timeframe_signal(df_1wk)["score"]
+            s_1m = evaluate_timeframe_signal(df_1m)["score"]
+            s_4h = evaluate_timeframe_signal(df_4h)["score"]
+            
+            net_score = s_1d*0.4 + s_1wk*0.3 + s_1m*0.2 + s_4h*0.1
+            
+            if net_score >= 2.0:
+                sig = "STRONG BUY"
+                col = "#089981"
+            elif net_score <= -2.0:
+                sig = "STRONG SELL"
+                col = "#f23645"
+            elif net_score > 0:
+                sig = "BUY"
+                col = "#2ecc71"
+            elif net_score < 0:
+                sig = "SELL"
+                col = "#e74c3c"
+            else:
+                sig = "NEUTRAL"
+                col = "#787b86"
+                
+            snap[sym] = {"price": c, "chg": chg, "pct": pct, "signal": sig, "col": col}
+        else:
+            snap[sym] = {"price": 0.0, "chg": 0.0, "pct": 0.0, "signal": "NEUTRAL", "col": "#787b86"}
+    return snap
+
+# --- STATIC LEFT-HAND WATCHLIST PANEL WITH SIGNAL FILTERS ---
 with st.sidebar:
-    st.markdown("### Watchlist")
-    search_q = st.text_input("Search Symbol", placeholder="Filter NIFTY, RELIANCE...", label_visibility="collapsed").upper().strip()
-    custom_ticker = st.text_input("Custom Yahoo Ticker", placeholder="Add e.g. ZOMATO.NS", label_visibility="collapsed").upper().strip()
-    if custom_ticker:
-        if st.button(f"Load {custom_ticker}", use_container_width=True):
-            st.session_state.active_symbol = custom_ticker
-            st.session_state.active_label = custom_ticker.replace(".NS", "")
+    st.markdown("<div style='font-size:1.05rem; font-weight:700; color:#ffffff; margin-bottom:6px;'>Watchlist</div>", unsafe_allow_html=True)
+    search_q = st.text_input("Filter Watchlist", placeholder="Search NIFTY, RELIANCE...", label_visibility="collapsed").upper().strip()
+
+    st.markdown("<div style='font-size:0.8rem; font-weight:600; color:#b2b5be; margin-top:8px;'>Master Signal Filter</div>", unsafe_allow_html=True)
+    sig_filter = st.radio(
+        "Signal Filter Mode",
+        options=["ALL", "STRONG BUY", "STRONG SELL"],
+        index=0,
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    custom_sym = st.text_input("Custom Symbol", placeholder="Add symbol (e.g. ZOMATO.NS)", label_visibility="collapsed").upper().strip()
+    if custom_sym:
+        if st.button(f"+ Open {custom_sym}", use_container_width=True):
+            st.session_state.active_symbol = custom_sym
+            st.session_state.active_label = custom_sym.replace(".NS", "")
             st.rerun()
 
-    quotes = get_watchlist_quotes()
+    st.markdown(
+        "<div style='display:flex; justify-content:space-between; font-size:0.70rem; color:#787b86; "
+        "border-bottom:1px solid #2a2e39; padding:4px 4px; margin-top:6px;'>"
+        "<span>Symbol</span><span>Last / Signal</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    snapshot = get_watchlist_snapshot()
 
     for section in ["Indices", "Stocks"]:
-        st.markdown(f"<div style='color:#787b86; font-size:0.75rem; font-weight:700; margin-top:10px; margin-bottom:4px; letter-spacing:0.05em;'>{section.upper()}</div>", unsafe_allow_html=True)
-        for item in [x for x in WATCHLIST_ITEMS if x["category"] == section]:
-            if search_q and search_q not in item["label"] and search_q not in item["symbol"]:
-                continue
+        filtered_items = [x for x in WATCHLIST_ITEMS if x["category"] == section]
+        if not filtered_items:
+            continue
+            
+        st.markdown(
+            f"<div style='color:#787b86; font-size:0.75rem; font-weight:700; margin-top:10px; "
+            f"margin-bottom:2px; letter-spacing:0.06em;'>{section.upper()}</div>",
+            unsafe_allow_html=True,
+        )
+        for item in filtered_items:
             sym = item["symbol"]
             lbl = item["label"]
-            price, chg, pct = quotes.get(sym, (0.0, 0.0, 0.0))
-            is_active = (st.session_state.active_symbol == sym)
-            color_hex = "#089981" if pct >= 0 else "#f23645"
-            sign = "+" if pct >= 0 else ""
+            info = snapshot.get(sym, {"price": 0.0, "chg": 0.0, "pct": 0.0, "signal": "NEUTRAL", "col": "#787b86"})
 
-            c1, c2 = st.columns([1.35, 1.0])
-            with c1:
-                btn_label = f"▶ {lbl}" if is_active else lbl
-                if st.button(btn_label, key=f"wl_{sym}", use_container_width=True):
+            if search_q and search_q not in lbl and search_q not in sym:
+                continue
+            if sig_filter != "ALL" and info["signal"] != sig_filter:
+                continue
+
+            is_active = st.session_state.active_symbol == sym
+            pct_col = "#089981" if info["pct"] >= 0 else "#f23645"
+            sign = "+" if info["pct"] >= 0 else ""
+            
+            sig_box_style = f"background-color: {info['col']}; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.72rem; display: inline-block; text-align: center; width: 85px;"
+
+            col_sym, col_val = st.columns([1.1, 1.4])
+            with col_sym:
+                prefix = "▶ " if is_active else ""
+                if st.button(f"{prefix}{lbl}", key=f"wl_btn_{sym}", use_container_width=True):
                     st.session_state.active_symbol = sym
                     st.session_state.active_label = lbl
                     st.rerun()
-            with c2:
+            with col_val:
                 st.markdown(
-                    f"<div style='text-align:right; line-height:1.15; padding-top:4px;'>"
-                    f"<span style='font-size:0.82rem; font-weight:600; color:#d1d4dc;'>{price:,.2f}</span><br>"
-                    f"<span style='font-size:0.72rem; color:{color_hex};'>{sign}{pct:.2f}%</span>"
+                    f"<div style='text-align:right; line-height:1.2; padding-top:2px;'>"
+                    f"<span style='font-size:0.82rem; font-weight:600; color:#d1d4dc;'>{info['price']:,.2f}</span><br>"
+                    f"<span style='font-size:0.65rem; color:{pct_col}; font-weight:500;'>{sign}{info['pct']:.2f}%</span> "
+                    f"<span style='{sig_box_style}'>{info['signal']}</span>"
                     f"</div>",
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
 
-# --- MAIN WORKSPACE: HEADER, MTF MATRIX & INTERACTIVE CHART ---
+# --- DEDICATED WORKSPACE FOR SELECTED SYMBOL ---
 active_sym = st.session_state.active_symbol
 active_lbl = st.session_state.active_label
 
-# Top Toolbar
-top_l, top_r1, top_r2, top_r3 = st.columns([3.2, 1.2, 1.2, 1.0])
-with top_l:
-    price, chg, pct = quotes.get(active_sym, (0.0, 0.0, 0.0))
-    if price == 0.0:
-        d_tmp = get_ohlcv(active_sym, "1d")
-        if len(d_tmp) >= 2:
-            price = float(d_tmp["Close"].iloc[-1])
-            chg = price - float(d_tmp["Close"].iloc[-2])
-            pct = (chg / float(d_tmp["Close"].iloc[-2])) * 100
-    p_color = "#089981" if pct >= 0 else "#f23645"
-    p_sign = "+" if pct >= 0 else ""
-    st.markdown(
-        f"<div class='tv-header'>"
-        f"<div><span class='tv-sym-title'>{active_lbl}</span> <span style='color:#787b86; font-size:0.85rem;'>({active_sym}) · NSE</span></div>"
-        f"<div><span class='tv-price' style='color:{p_color};'>₹{price:,.2f}</span> "
-        f"<span style='color:{p_color}; font-size:0.95rem; font-weight:600;'>{p_sign}{chg:.2f} ({p_sign}{pct:.2f}%)</span></div>"
-        f"</div>",
-        unsafe_allow_html=True
-    )
+# Evaluate all 9 timeframes immediately upon selection
+mtf_results = {}
+net_score = 0
+for tf in ALL_TIMEFRAMES:
+    df_tf = get_ohlcv(active_sym, tf)
+    res = evaluate_timeframe_signal(df_tf)
+    mtf_results[tf] = res
+    net_score += res["score"]
+
+if net_score >= 22:
+    consensus_sig, consensus_css = "STRONG BUY", "sig-strong-buy"
+elif net_score >= 7:
+    consensus_sig, consensus_css = "BUY", "sig-buy"
+elif net_score <= -22:
+    consensus_sig, consensus_css = "STRONG SELL", "sig-strong-sell"
+elif net_score <= -7:
+    consensus_sig, consensus_css = "SELL", "sig-sell"
+else:
+    consensus_sig, consensus_css = "NEUTRAL", "sig-neutral"
+
+# Fetch Chart Data for Primary Interval
+top_l, top_r1, top_r2, top_r3 = st.columns([3.5, 1.1, 1.1, 0.9])
 with top_r1:
-    chart_tf = st.selectbox("Chart Interval", options=TIMEFRAMES, index=3)
+    chart_tf = st.selectbox("Interval", options=CHART_TIMEFRAMES, index=3)
 with top_r2:
-    chart_style = st.selectbox("Chart Type", options=["Candles", "Hollow Candles", "Line"], index=0)
+    chart_style = st.selectbox("Style", options=["Candles", "Hollow Candles", "Line"], index=0)
 with top_r3:
     if st.button("Refresh", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
-# --- MULTI-TIMEFRAME TECHNICAL ANALYSIS MATRIX (15m, 1h, 4h, 1d, 1wk) ---
-mtf_results = {}
-total_score = 0
-for tf in TIMEFRAMES:
-    df_tf = get_ohlcv(active_sym, tf)
-    mtf_results[tf] = evaluate_timeframe_signal(df_tf)
-    total_score += mtf_results[tf]["score"]
-
-if total_score >= 12:
-    overall_sig, overall_css = "STRONG BUY", "sig-strong-buy"
-elif total_score >= 4:
-    overall_sig, overall_css = "BUY", "sig-buy"
-elif total_score <= -12:
-    overall_sig, overall_css = "STRONG SELL", "sig-strong-sell"
-elif total_score <= -4:
-    overall_sig, overall_css = "SELL", "sig-sell"
-else:
-    overall_sig, overall_css = "NEUTRAL", "sig-neutral"
-
-matrix_cols = st.columns([1, 1, 1, 1, 1, 1.35])
-for idx, tf in enumerate(TIMEFRAMES):
-    res = mtf_results[tf]
-    with matrix_cols[idx]:
-        st.markdown(
-            f"<div class='mtf-card'>"
-            f"<div class='mtf-tf'>{tf} Timeframe</div>"
-            f"<div class='mtf-sig {res['css']}'>{res['signal']}</div>"
-            f"<div class='mtf-meta'>RSI: {res['rsi']} · {res['trend']}</div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-
-with matrix_cols[5]:
-    st.markdown(
-        f"<div class='mtf-card' style='border-color:#434651;'>"
-        f"<div class='mtf-tf'>Consensus Summary</div>"
-        f"<div class='mtf-sig {overall_css}'>{overall_sig}</div>"
-        f"<div class='mtf-meta'>Net Score: {total_score:+d} / +30</div>"
-        f"</div>",
-        unsafe_allow_html=True
-    )
-
-st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
-
-# --- INDICATOR OVERLAY TOGGLES ---
-ind_c1, ind_c2, ind_c3, ind_c4, ind_c5 = st.columns(5)
-with ind_c1:
-    show_ema = st.checkbox("EMA 20 / 50", value=True)
-with ind_c2:
-    show_bb = st.checkbox("Bollinger Bands", value=False)
-with ind_c3:
-    show_vwap = st.checkbox("VWAP (20)", value=True)
-with ind_c4:
-    show_rsi = st.checkbox("RSI (14)", value=True)
-with ind_c5:
-    show_macd = st.checkbox("MACD (12,26,9)", value=True)
-
-# --- BUILD INTERACTIVE PLOTLY TRADINGVIEW CHART ---
 df_chart = get_ohlcv(active_sym, chart_tf)
 if df_chart.empty:
-    st.error(f"No historical data returned for {active_sym} ({chart_tf}).")
+    st.error(f"No market data available for {active_sym}.")
     st.stop()
 
 df_chart = compute_indicators(df_chart).tail(160)
+curr_close = float(df_chart["Close"].iloc[-1])
+prev_close = float(df_chart["Close"].iloc[-2]) if len(df_chart) > 1 else curr_close
+chg_val = curr_close - prev_close
+pct_val = (chg_val / prev_close) * 100 if prev_close != 0 else 0.0
+atr_val = float(df_chart["ATR"].iloc[-1]) if not np.isnan(df_chart["ATR"].iloc[-1]) else curr_close * 0.015
 
+if net_score >= 0:
+    sl_price = curr_close - 1.5 * atr_val
+    t1_price = curr_close + 2.5 * atr_val
+else:
+    sl_price = curr_close + 1.5 * atr_val
+    t1_price = curr_close - 2.5 * atr_val
+
+with top_l:
+    p_col = "#089981" if pct_val >= 0 else "#f23645"
+    p_sign = "+" if pct_val >= 0 else ""
+    st.markdown(
+        f"<div class='tv-topbar'>"
+        f"<div><span class='tv-sym-title'>{active_lbl}</span> "
+        f"<span style='color:#787b86; font-size:0.85rem;'>({active_sym}) · NSE</span></div>"
+        f"<div><span class='tv-price' style='color:{p_col};'>₹{curr_close:,.2f}</span> "
+        f"<span style='color:{p_col}; font-size:0.92rem; font-weight:600;'>{p_sign}{chg_val:.2f} ({p_sign}{pct_val:.2f}%)</span></div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+# --- DEDICATED TOP SECTION: MULTI-TIMEFRAME SIGNAL CARDS (15m TO 1mo) ---
+tf_cols = st.columns(len(ALL_TIMEFRAMES) + 1)
+for idx, tf in enumerate(ALL_TIMEFRAMES):
+    r = mtf_results[tf]
+    with tf_cols[idx]:
+        st.markdown(
+            f"<div class='mtf-card'>"
+            f"<div class='mtf-tf'>{tf}</div>"
+            f"<div class='mtf-sig {r['css']}'>{r['signal']}</div>"
+            f"<div class='mtf-meta'>RSI {r['rsi']}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+with tf_cols[-1]:
+    st.markdown(
+        f"<div class='mtf-card' style='border-color:#434651;'>"
+        f"<div class='mtf-tf'>MASTER</div>"
+        f"<div class='mtf-sig {consensus_css}'>{consensus_sig}</div>"
+        f"<div class='mtf-meta'>Score {net_score:+d}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+# Indicator & Level Toggles Bar
+t1, t2, t3, t4, t5, t6 = st.columns(6)
+with t1:
+    show_ema = st.checkbox("EMA 20 / 50", value=True)
+with t2:
+    show_vwap = st.checkbox("VWAP (20)", value=True)
+with t3:
+    show_bb = st.checkbox("Bollinger Bands", value=False)
+with t4:
+    show_levels = st.checkbox("SL / Target Levels", value=True)
+with t5:
+    show_rsi = st.checkbox("RSI (14)", value=True)
+with t6:
+    show_macd = st.checkbox("MACD (12,26,9)", value=True)
+
+# --- INTERACTIVE TRADINGVIEW CHART BELOW ---
 panels = ["price"]
 if show_rsi:
     panels.append("rsi")
@@ -345,35 +452,57 @@ n_rows = len(panels)
 heights = [1.0] if n_rows == 1 else ([0.72, 0.28] if n_rows == 2 else [0.58, 0.20, 0.22])
 
 fig = make_subplots(
-    rows=n_rows, cols=1, shared_xaxes=True,
-    vertical_spacing=0.02, row_heights=heights
+    rows=n_rows, cols=1, shared_xaxes=True, vertical_spacing=0.02, row_heights=heights
 )
 
-# Main Price Trace
 if chart_style == "Candles":
-    fig.add_trace(go.Candlestick(
-        x=df_chart.index, open=df_chart["Open"], high=df_chart["High"],
-        low=df_chart["Low"], close=df_chart["Close"],
-        increasing_line_color="#089981", increasing_fillcolor="#089981",
-        decreasing_line_color="#f23645", decreasing_fillcolor="#f23645",
-        name=active_lbl
-    ), row=1, col=1)
+    fig.add_trace(
+        go.Candlestick(
+            x=df_chart.index,
+            open=df_chart["Open"],
+            high=df_chart["High"],
+            low=df_chart["Low"],
+            close=df_chart["Close"],
+            increasing_line_color="#089981",
+            increasing_fillcolor="#089981",
+            decreasing_line_color="#f23645",
+            decreasing_fillcolor="#f23645",
+            name=active_lbl,
+        ),
+        row=1,
+        col=1,
+    )
 elif chart_style == "Hollow Candles":
-    fig.add_trace(go.Candlestick(
-        x=df_chart.index, open=df_chart["Open"], high=df_chart["High"],
-        low=df_chart["Low"], close=df_chart["Close"],
-        increasing_line_color="#089981", increasing_fillcolor="rgba(0,0,0,0)",
-        decreasing_line_color="#f23645", decreasing_fillcolor="#f23645",
-        name=active_lbl
-    ), row=1, col=1)
+    fig.add_trace(
+        go.Candlestick(
+            x=df_chart.index,
+            open=df_chart["Open"],
+            high=df_chart["High"],
+            low=df_chart["Low"],
+            close=df_chart["Close"],
+            increasing_line_color="#089981",
+            increasing_fillcolor="rgba(0,0,0,0)",
+            decreasing_line_color="#f23645",
+            decreasing_fillcolor="#f23645",
+            name=active_lbl,
+        ),
+        row=1,
+        col=1,
+    )
 else:
-    fig.add_trace(go.Scatter(
-        x=df_chart.index, y=df_chart["Close"],
-        line=dict(color="#2962ff", width=2), fill="tozeroy",
-        fillcolor="rgba(41, 98, 255, 0.12)", name=active_lbl
-    ), row=1, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=df_chart["Close"],
+            line=dict(color="#2962ff", width=2),
+            fill="tozeroy",
+            fillcolor="rgba(41, 98, 255, 0.12)",
+            name=active_lbl,
+        ),
+        row=1,
+        col=1,
+    )
 
-# Overlays
 if show_ema:
     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["EMA20"], line=dict(color="#2962ff", width=1.3), name="EMA 20"), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["EMA50"], line=dict(color="#ff9800", width=1.3), name="EMA 50"), row=1, col=1)
@@ -383,37 +512,64 @@ if show_vwap:
 
 if show_bb:
     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["BB_Upper"], line=dict(color="rgba(41,98,255,0.45)", width=1), name="BB Upper"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["BB_Lower"], line=dict(color="rgba(41,98,255,0.45)", width=1), fill="tonexty", fillcolor="rgba(41,98,255,0.06)", name="BB Lower"), row=1, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=df_chart["BB_Lower"],
+            line=dict(color="rgba(41,98,255,0.45)", width=1),
+            fill="tonexty",
+            fillcolor="rgba(41,98,255,0.06)",
+            name="BB Lower",
+        ),
+        row=1,
+        col=1,
+    )
 
-# Current Price Line & Right-Axis Badge
-curr_close = float(df_chart["Close"].iloc[-1])
+# Right-Axis Price & Trade Level Tags
 curr_open = float(df_chart["Open"].iloc[-1])
-badge_col = "#089981" if curr_close >= curr_open else "#f23645"
+cmp_col = "#089981" if curr_close >= curr_open else "#f23645"
+axis_tags = [(curr_close, f"{curr_close:,.2f}", cmp_col, "solid")]
 
-fig.add_hline(y=curr_close, line_dash="dash", line_color=badge_col, line_width=1, row=1, col=1)
-fig.add_annotation(
-    xref="paper", x=1.002, yref="y", y=curr_close,
-    text=f"<b>{curr_close:,.2f}</b>", showarrow=False,
-    xanchor="left", yanchor="middle",
-    font=dict(color="#ffffff", size=11), bgcolor=badge_col, borderpad=3
-)
+if show_levels:
+    axis_tags.append((sl_price, f"SL {sl_price:,.2f}", "#f23645", "dash"))
+    axis_tags.append((t1_price, f"T1 {t1_price:,.2f}", "#089981", "dash"))
+
+for y_val, label_txt, bg_hex, dash_type in axis_tags:
+    fig.add_hline(y=y_val, line_dash=dash_type, line_color=bg_hex, line_width=1, row=1, col=1)
+    fig.add_annotation(
+        xref="paper",
+        x=1.002,
+        yref="y",
+        y=y_val,
+        text=f"<b>{label_txt}</b>",
+        showarrow=False,
+        xanchor="left",
+        yanchor="middle",
+        font=dict(color="#ffffff", size=10),
+        bgcolor=bg_hex,
+        borderpad=3,
+    )
 
 curr_row = 2
 if show_rsi:
     latest_rsi = float(df_chart["RSI"].iloc[-1])
-    fig.add_trace(go.Scatter(
-        x=df_chart.index, y=df_chart["RSI"],
-        line=dict(color="#7e57c2", width=1.6), name="RSI (14)"
-    ), row=curr_row, col=1)
+    fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["RSI"], line=dict(color="#7e57c2", width=1.6), name="RSI (14)"), row=curr_row, col=1)
     fig.add_hrect(y0=30, y1=70, fillcolor="rgba(126, 87, 194, 0.08)", line_width=0, row=curr_row, col=1)
     fig.add_hline(y=70, line_dash="dot", line_color="#787b86", line_width=0.9, row=curr_row, col=1)
     fig.add_hline(y=30, line_dash="dot", line_color="#787b86", line_width=0.9, row=curr_row, col=1)
     fig.update_yaxes(range=[0, 100], title_text="RSI", side="right", gridcolor="#2a2e39", row=curr_row, col=1)
     fig.add_annotation(
-        xref="paper", x=1.002, yref=f"y{curr_row}", y=latest_rsi,
-        text=f"<b>{latest_rsi:.1f}</b>", showarrow=False,
-        xanchor="left", yanchor="middle",
-        font=dict(color="#ffffff", size=10), bgcolor="#7e57c2", borderpad=3
+        xref="paper",
+        x=1.002,
+        yref=f"y{curr_row}",
+        y=latest_rsi,
+        text=f"<b>{latest_rsi:.1f}</b>",
+        showarrow=False,
+        xanchor="left",
+        yanchor="middle",
+        font=dict(color="#ffffff", size=10),
+        bgcolor="#7e57c2",
+        borderpad=3,
     )
     curr_row += 1
 
@@ -429,14 +585,14 @@ fig.update_xaxes(gridcolor="#2a2e39", showspikes=True, spikemode="across", spike
 fig.update_yaxes(showspikes=True, spikemode="across", spikecolor="#787b86", spikethickness=1)
 
 fig.update_layout(
-    height=640,
+    height=610,
     paper_bgcolor="#131722",
     plot_bgcolor="#131722",
     font=dict(color="#d1d4dc"),
     xaxis_rangeslider_visible=False,
     hovermode="x unified",
-    margin=dict(l=10, r=75, t=15, b=15),
-    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0, bgcolor="rgba(0,0,0,0)")
+    margin=dict(l=10, r=78, t=12, b=12),
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0, bgcolor="rgba(0,0,0,0)"),
 )
 
 st.plotly_chart(fig, use_container_width=True)
