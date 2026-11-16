@@ -631,6 +631,7 @@ else:
             "displayModeBar": True,
             "displaylogo": False,
             "doubleClick": "reset",
+            "modeBarButtonsToRemove": ["lasso2d", "select2d"],
             "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
         },
     )
