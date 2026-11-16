@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # -----------------------------------------------------------------------------
-# PAGE CONFIGURATION & COMPACT INSTITUTIONAL STYLING
+# 1. PAGE CONFIGURATION & INSTITUTIONAL TERMINAL STYLING
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="MTF Institutional Trading Terminal",
@@ -16,7 +16,6 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* Compact layout & clean institutional styling */
     .block-container {
         padding-top: 1.2rem;
         padding-bottom: 1rem;
@@ -27,6 +26,7 @@ st.markdown("""
         font-size: 1.65rem !important;
         font-weight: 700 !important;
         margin-bottom: 0.2rem !important;
+        letter-spacing: -0.02em;
     }
     h2 {
         font-size: 1.25rem !important;
@@ -46,7 +46,6 @@ st.markdown("""
         font-size: 0.78rem !important;
         color: #555555;
     }
-    /* Styled compact table */
     div[data-testid="stDataFrame"] {
         border: 1px solid #e0e0e0;
         border-radius: 6px;
@@ -56,27 +55,32 @@ st.markdown("""
         padding: 0.25rem 0.75rem;
         font-size: 0.85rem;
         border-radius: 4px;
+        font-weight: 600;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# SESSION STATE MANAGEMENT
+# 2. SESSION STATE & NIFTY 50 MTF UNIVERSE
 # -----------------------------------------------------------------------------
 if "selected_stock" not in st.session_state:
     st.session_state.selected_stock = None
 
-NIFTY_50_TICKERS = [
+TOP_50_MTF_TICKERS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "BHARTIARTL.NS",
     "SBIN.NS", "INFY.NS", "LICI.NS", "ITC.NS", "HINDUNILVR.NS",
     "LT.NS", "BAJFINANCE.NS", "HCLTECH.NS", "MARUTI.NS", "SUNPHARMA.NS",
     "ADANIENT.NS", "KOTAKBANK.NS", "TITAN.NS", "ONGC.NS", "TATAMOTORS.NS",
     "NTPC.NS", "AXISBANK.NS", "ULTRACEMCO.NS", "WIPRO.NS", "M&M.NS",
-    "COALINDIA.NS", "BAJAJFINSV.NS", "POWERGRID.NS", "NESTLEIND.NS", "TATASTEEL.NS"
+    "COALINDIA.NS", "BAJAJFINSV.NS", "POWERGRID.NS", "NESTLEIND.NS", "TATASTEEL.NS",
+    "JSWSTEEL.NS", "ADANIPORTS.NS", "ASIANPAINT.NS", "GRASIM.NS", "TECHM.NS",
+    "HINDALCO.NS", "INDUSINDBK.NS", "CIPLA.NS", "DRREDDY.NS", "EICHERMOT.NS",
+    "DIVISLAB.NS", "BPCL.NS", "BRITANNIA.NS", "APOLLOHOSP.NS", "HEROMOTOCO.NS",
+    "TATACONSUM.NS", "SBILIFE.NS", "HDFCLIFE.NS", "BAJAJ-AUTO.NS", "LTIM.NS"
 ]
 
 # -----------------------------------------------------------------------------
-# TECHNICAL INDICATORS & PATTERN ENGINE
+# 3. TECHNICAL INDICATOR & INSTITUTIONAL PATTERN ENGINE
 # -----------------------------------------------------------------------------
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -85,28 +89,28 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     low = df["Low"]
     volume = df["Volume"]
 
-    # SMAs
+    # Moving Averages
     df["SMA20"] = close.rolling(20).mean()
     df["SMA50"] = close.rolling(50).mean()
 
     # Bollinger Bands (20, 2)
     std20 = close.rolling(20).std()
-    df["BB_Upper"] = df["SMA20"] + 2 * std20
-    df["BB_Lower"] = df["SMA20"] - 2 * std20
+    df["BB_Upper"] = df["SMA20"] + (2.0 * std20)
+    df["BB_Lower"] = df["SMA20"] - (2.0 * std20)
 
-    # Rolling VWAP (20-period institutional anchor)
-    tp = (high + low + close) / 3.0
-    df["VWAP"] = (tp * volume).rolling(20).sum() / volume.rolling(20).sum()
+    # Rolling Institutional VWAP (20-period anchor)
+    typical_price = (high + low + close) / 3.0
+    vol_sum = volume.rolling(20).sum().replace(0, np.nan)
+    df["VWAP"] = (typical_price * volume).rolling(20).sum() / vol_sum
 
-    # RSI (14) - Wilder's Smoothing
+    # Wilder's RSI (14)
     delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
     rs = gain / loss.replace(0, np.nan)
-    df["RSI"] = 100 - (100 / (1 + rs))
-    df["RSI"] = df["RSI"].fillna(50.0)
+    df["RSI"] = (100.0 - (100.0 / (1.0 + rs))).fillna(50.0)
 
-    # ATR (14)
+    # Average True Range (14)
     tr = pd.concat([
         high - low,
         (high - close.shift()).abs(),
@@ -116,14 +120,14 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-def analyze_timeframe(df: pd.DataFrame):
+def analyze_timeframe(df: pd.DataFrame) -> dict:
     if df is None or len(df) < 55:
         return {
             "signal": "NEUTRAL", "score": 0, "rsi": 50.0,
             "entry": 0.0, "sl": 0.0, "t1": 0.0, "t2": 0.0,
-            "patterns": [], "candles": [], "rsi_note": "Insufficient data",
+            "patterns": [], "candles": [], "rsi_signals": [],
             "sma20": 0.0, "sma50": 0.0, "vwap": 0.0, "vol_ratio": 1.0,
-            "support": 0.0, "resistance": 0.0, "fib": {}
+            "support": 0.0, "resistance": 0.0, "fib": {}, "df": df
         }
 
     df = compute_indicators(df)
@@ -133,33 +137,37 @@ def analyze_timeframe(df: pd.DataFrame):
     price = float(last["Close"])
     rsi = float(last["RSI"])
     prev_rsi = float(prev["RSI"])
-    sma20 = float(last["SMA20"])
-    sma50 = float(last["SMA50"])
+    sma20 = float(last["SMA20"]) if not np.isnan(last["SMA20"]) else price
+    sma50 = float(last["SMA50"]) if not np.isnan(last["SMA50"]) else price
     vwap = float(last["VWAP"]) if not np.isnan(last["VWAP"]) else price
     atr = float(last["ATR"]) if not np.isnan(last["ATR"]) else price * 0.015
 
-    # Scoring & Signals
+    # Institutional Confluence Scoring (-4 to +4)
     score = 0
-    if price > sma20: score += 1
-    else: score -= 1
-    if price > sma50: score += 1
-    else: score -= 1
-    if price > vwap: score += 1
-    else: score -= 1
-    if rsi >= 60: score += 1
-    elif rsi <= 40: score -= 1
+    score += 1 if price > sma20 else -1
+    score += 1 if price > sma50 else -1
+    score += 1 if price > vwap else -1
+    if rsi >= 60:
+        score += 1
+    elif rsi <= 40:
+        score -= 1
 
-    if score >= 3: signal = "STRONG BUY"
-    elif score >= 1: signal = "BUY"
-    elif score <= -3: signal = "STRONG SELL"
-    elif score <= -1: signal = "SELL"
-    else: signal = "NEUTRAL"
+    if score >= 3:
+        signal = "STRONG BUY"
+    elif score >= 1:
+        signal = "BUY"
+    elif score <= -3:
+        signal = "STRONG SELL"
+    elif score <= -1:
+        signal = "SELL"
+    else:
+        signal = "NEUTRAL"
 
-    # Swing High/Low & Fibonacci (60 bars)
+    # Swing High/Low & Fibonacci Retracement Levels (60-bar lookback)
     lookback = df.tail(60)
     swing_high = float(lookback["High"].max())
     swing_low = float(lookback["Low"].min())
-    diff = swing_high - swing_low
+    diff = max(swing_high - swing_low, 1e-6)
     fib = {
         "0.0% (High)": round(swing_high, 2),
         "23.6%": round(swing_high - 0.236 * diff, 2),
@@ -174,36 +182,47 @@ def analyze_timeframe(df: pd.DataFrame):
         entry = round(price, 1)
         sl = round(max(swing_high, price + 1.5 * atr), 1)
         risk = max(sl - entry, price * 0.005)
-        t1 = round(entry - 2 * risk, 1)
-        t2 = round(entry - 3 * risk, 1)
+        t1 = round(entry - 2.0 * risk, 1)
+        t2 = round(entry - 3.0 * risk, 1)
     else:
         entry = round(price, 1)
         sl = round(min(swing_low, price - 1.5 * atr), 1)
         risk = max(entry - sl, price * 0.005)
-        t1 = round(entry + 2 * risk, 1)
-        t2 = round(entry + 3 * risk, 1)
+        t1 = round(entry + 2.0 * risk, 1)
+        t2 = round(entry + 3.0 * risk, 1)
 
-    # Active Signals & Patterns
+    # Chart Structure Patterns
     patterns = []
     if price > sma20 > sma50:
         patterns.append("Trend Following")
-    if abs(swing_low - float(lookback["Low"].tail(15).min())) / swing_low < 0.015 and price > sma20:
+    recent_low = float(lookback["Low"].tail(15).min())
+    if swing_low > 0 and abs(swing_low - recent_low) / swing_low < 0.015 and price > sma20:
         patterns.append("Double Bottom Breakout")
     if swing_low < float(lookback["Low"].head(20).min()) and price > sma50:
         patterns.append("Inverse Head & Shoulders")
 
-    # Candlestick detection
+    # Candlestick Patterns
     candles = []
-    body = abs(last["Close"] - last["Open"])
-    rng = max(last["High"] - last["Low"], 1e-6)
-    if body / rng < 0.12:
+    body = abs(float(last["Close"]) - float(last["Open"]))
+    bar_range = max(float(last["High"]) - float(last["Low"]), 1e-6)
+    if body / bar_range < 0.12:
         candles.append("Doji")
-    elif last["Close"] > last["Open"] and prev["Close"] < prev["Open"] and last["Close"] > prev["Open"] and last["Open"] < prev["Close"]:
+    elif (
+        last["Close"] > last["Open"]
+        and prev["Close"] < prev["Open"]
+        and last["Close"] > prev["Open"]
+        and last["Open"] < prev["Close"]
+    ):
         candles.append("Bullish Engulfing")
-    elif last["Close"] < last["Open"] and prev["Close"] > prev["Open"] and last["Close"] < prev["Open"] and last["Open"] > prev["Close"]:
+    elif (
+        last["Close"] < last["Open"]
+        and prev["Close"] > prev["Open"]
+        and last["Close"] < prev["Open"]
+        and last["Open"] > prev["Close"]
+    ):
         candles.append("Bearish Engulfing")
 
-    # RSI 40/60 Zone Rules
+    # RSI 40/60 Regime Signals
     rsi_signals = []
     if prev_rsi < 60 <= rsi:
         rsi_signals.append("RSI 60 Breakout & Retest Support")
@@ -212,7 +231,8 @@ def analyze_timeframe(df: pd.DataFrame):
     elif prev_rsi > 40 >= rsi:
         rsi_signals.append("RSI 40 Bear Zone Breakdown")
 
-    vol_ratio = round(float(last["Volume"]) / max(float(df["Volume"].tail(20).mean()), 1.0), 2)
+    avg_vol = max(float(df["Volume"].tail(20).mean()), 1.0)
+    vol_ratio = round(float(last["Volume"]) / avg_vol, 2)
 
     return {
         "signal": signal,
@@ -235,6 +255,9 @@ def analyze_timeframe(df: pd.DataFrame):
         "df": df
     }
 
+# -----------------------------------------------------------------------------
+# 4. DATA FETCHING & MULTI-TIMEFRAME SCANNER
+# -----------------------------------------------------------------------------
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_stock_data(ticker: str, interval: str):
     period_map = {
@@ -245,8 +268,13 @@ def fetch_stock_data(ticker: str, interval: str):
         "1wk": "3y"
     }
     try:
-        df = yf.download(ticker, period=period_map.get(interval, "1y"), interval=interval, progress=False)
-        if df.empty:
+        df = yf.download(
+            ticker,
+            period=period_map.get(interval, "1y"),
+            interval=interval,
+            progress=False
+        )
+        if df is None or df.empty:
             return None
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -255,20 +283,16 @@ def fetch_stock_data(ticker: str, interval: str):
         return None
 
 @st.cache_data(ttl=300, show_spinner=False)
-def scan_all_stocks(capital: float, risk_pct: float):
+def scan_all_stocks(capital: float, risk_pct: float) -> pd.DataFrame:
     rows = []
     risk_amount = capital * (risk_pct / 100.0)
-    for ticker in NIFTY_50_TICKERS:
-        df_1d = fetch_stock_data(ticker, "1d")
-        df_1h = fetch_stock_data(ticker, "1h")
-        df_15m = fetch_stock_data(ticker, "15m")
-
-        res_1d = analyze_timeframe(df_1d)
-        res_1h = analyze_timeframe(df_1h)
-        res_15m = analyze_timeframe(df_15m)
-
+    for ticker in TOP_50_MTF_TICKERS:
+        res_1d = analyze_timeframe(fetch_stock_data(ticker, "1d"))
         if res_1d["entry"] == 0:
             continue
+
+        res_1h = analyze_timeframe(fetch_stock_data(ticker, "1h"))
+        res_15m = analyze_timeframe(fetch_stock_data(ticker, "15m"))
 
         sigs = [res_1d["signal"], res_1h["signal"], res_15m["signal"]]
         if all("BUY" in s for s in sigs):
@@ -281,8 +305,8 @@ def scan_all_stocks(capital: float, risk_pct: float):
         risk_per_share = max(abs(res_1d["entry"] - res_1d["sl"]), res_1d["entry"] * 0.005)
         qty = max(1, int(risk_amount // risk_per_share))
 
-        all_active = res_1d["patterns"] + res_1d["candles"] + res_1d["rsi_signals"]
-        active_str = ", ".join(all_active) if all_active else "Trend Following"
+        combined_signals = res_1d["patterns"] + res_1d["candles"] + res_1d["rsi_signals"]
+        active_str = ", ".join(combined_signals) if combined_signals else "Trend Following"
 
         rows.append({
             "Ticker": ticker,
@@ -302,25 +326,25 @@ def scan_all_stocks(capital: float, risk_pct: float):
     return pd.DataFrame(rows)
 
 # -----------------------------------------------------------------------------
-# COMPACT STYLED MATRIX VIEW (MAIN DASHBOARD)
+# 5. MAIN DASHBOARD: COMPACT STYLED TOP 50 MTF MATRIX
 # -----------------------------------------------------------------------------
 def style_matrix(df: pd.DataFrame):
-    def color_signal(val):
+    def color_cell(val):
         if val in ["STRONG BUY", "ALIGNED BULLISH"]:
             return "background-color: #d4edda; color: #155724; font-weight: 700;"
-        elif val == "BUY":
+        if val == "BUY":
             return "background-color: #e8f5e9; color: #2e7d32; font-weight: 600;"
-        elif val in ["STRONG SELL", "ALIGNED BEARISH"]:
+        if val in ["STRONG SELL", "ALIGNED BEARISH"]:
             return "background-color: #f8d7da; color: #721c24; font-weight: 700;"
-        elif val == "SELL":
+        if val == "SELL":
             return "background-color: #ffebee; color: #c62828; font-weight: 600;"
-        elif val == "MIXED":
+        if val == "MIXED":
             return "background-color: #fff3cd; color: #856404; font-weight: 600;"
         return "color: #555555;"
 
     return (
         df.style
-        .map(color_signal, subset=["MTF Confluence", "1D Signal", "1H Signal", "15M Signal"])
+        .map(color_cell, subset=["MTF Confluence", "1D Signal", "1H Signal", "15M Signal"])
         .format({
             "Price": "₹{:.1f}",
             "1D RSI": "{:.1f}",
@@ -334,7 +358,7 @@ def render_main_dashboard():
     st.title("Top 50 MTF Breakout & Institutional Matrix")
     st.caption("Click any row in the matrix to open its dedicated Multi-Timeframe analysis, active breakout patterns, and dynamic chart.")
 
-    c1, c2, c3 = st.columns([1.2, 1.2, 2.6])
+    c1, c2, c3, c4 = st.columns([1.1, 1.1, 2.2, 1.6])
     with c1:
         capital = st.number_input("Trading Capital (₹)", min_value=10000.0, value=100000.0, step=10000.0)
     with c2:
@@ -345,6 +369,8 @@ def render_main_dashboard():
             ["ALIGNED BULLISH", "ALIGNED BEARISH", "MIXED"],
             default=["ALIGNED BULLISH", "ALIGNED BEARISH", "MIXED"]
         )
+    with c4:
+        search_query = st.text_input("Search Ticker", placeholder="e.g. RELIANCE, TCS").strip().upper()
 
     with st.spinner("Scanning Top 50 stocks across 15m, 1h, and 1d timeframes..."):
         matrix_df = scan_all_stocks(capital, risk_pct)
@@ -353,7 +379,11 @@ def render_main_dashboard():
         st.warning("No market data available at the moment.")
         return
 
-    filtered_df = matrix_df[matrix_df["MTF Confluence"].isin(confluence_filter)].reset_index(drop=True)
+    filtered_df = matrix_df[matrix_df["MTF Confluence"].isin(confluence_filter)]
+    if search_query:
+        filtered_df = filtered_df[filtered_df["Stock"].str.contains(search_query, na=False)]
+    filtered_df = filtered_df.reset_index(drop=True)
+
     display_cols = [
         "Stock", "Price", "MTF Confluence", "1D Signal", "1H Signal",
         "15M Signal", "1D RSI", "Entry", "SL", "Target 1", "Qty", "Active Signals"
@@ -362,7 +392,7 @@ def render_main_dashboard():
     event = st.dataframe(
         style_matrix(filtered_df[display_cols]),
         use_container_width=True,
-        height=640,
+        height=650,
         hide_index=True,
         on_select="rerun",
         selection_mode="single-row"
@@ -374,10 +404,10 @@ def render_main_dashboard():
         st.rerun()
 
 # -----------------------------------------------------------------------------
-# DEDICATED DEEP-DIVE VIEW WITH RIGHT PRICE AXIS & LEFT INDICATOR CONTROLS
+# 6. DEDICATED DEEP-DIVE VIEW WITH ISOLATED ZOOM & LEFT POPOVER CONTROLS
 # -----------------------------------------------------------------------------
 def render_deep_dive(ticker: str):
-    if st.button("← Back to Top 50 Matrix"):
+    if st.button("← Back to Matrix"):
         st.session_state.selected_stock = None
         st.rerun()
 
@@ -394,9 +424,7 @@ def render_deep_dive(ticker: str):
 
     # Multi-Timeframe Confluence Strip
     timeframes = ["5m", "15m", "1h", "1d", "1wk"]
-    tf_results = {}
-    for tf in timeframes:
-        tf_results[tf] = analyze_timeframe(fetch_stock_data(ticker, tf))
+    tf_results = {tf: analyze_timeframe(fetch_stock_data(ticker, tf)) for tf in timeframes}
 
     st.subheader("Multi-Timeframe Confluence Matrix")
     tf_cols = st.columns(5)
@@ -446,7 +474,7 @@ def render_deep_dive(ticker: str):
             st.caption(f"Fib {k}: {v}")
 
     # -------------------------------------------------------------------------
-    # DYNAMIC CHART WITH LEFT-SIDE INDICATOR TOGGLE POPOVER & RIGHT PRICE AXIS
+    # DYNAMIC CHART: TOP-LEFT POPOVER CONTROLS + RIGHT PRICE AXIS + LOCKED SUBPLOTS
     # -------------------------------------------------------------------------
     df_chart = active_res.get("df")
     if df_chart is None or df_chart.empty:
@@ -455,23 +483,22 @@ def render_deep_dive(ticker: str):
 
     df_plot = df_chart.tail(120).copy()
 
-    # Left-side Popover Button to Pin/Unpin Indicators & Sub-panels
     left_ctrl_col, title_col = st.columns([1.3, 4.7])
     with left_ctrl_col:
         with st.popover("⚙️ Indicators & Panels", use_container_width=True):
-            st.markdown("**Overlay Indicators**")
-            show_sma20 = st.checkbox("20 SMA", value=True, key="tog_sma20")
-            show_sma50 = st.checkbox("50 SMA", value=True, key="tog_sma50")
-            show_vwap = st.checkbox("VWAP", value=True, key="tog_vwap")
-            show_bb = st.checkbox("Bollinger Bands (Upper/Lower)", value=True, key="tog_bb")
+            st.markdown("**Price Overlays**")
+            show_sma20 = st.checkbox("20 SMA", value=True, key="chk_sma20")
+            show_sma50 = st.checkbox("50 SMA", value=True, key="chk_sma50")
+            show_vwap = st.checkbox("VWAP", value=True, key="chk_vwap")
+            show_bb = st.checkbox("Bollinger Bands", value=True, key="chk_bb")
             st.divider()
-            st.markdown("**Lower Indicator Panels**")
-            show_vol = st.checkbox("Volume Panel", value=True, key="tog_vol")
-            show_rsi = st.checkbox("RSI (14) Panel", value=True, key="tog_rsi")
+            st.markdown("**Lower Sub-Panels**")
+            show_vol = st.checkbox("Volume", value=True, key="chk_vol")
+            show_rsi = st.checkbox("RSI (14)", value=True, key="chk_rsi")
+
     with title_col:
         st.markdown(f"### {ticker} ({active_tf}) — {active_res['signal']} | Score: {active_res['score']}")
 
-    # Build dynamic subplot rows based on pinned lower panels
     active_panels = ["price"]
     if show_vol:
         active_panels.append("vol")
@@ -489,12 +516,12 @@ def render_deep_dive(ticker: str):
     fig = make_subplots(
         rows=num_rows,
         cols=1,
-        shared_xaxes=False,  # Independent X-axes so zooming price doesn't distort Volume/RSI
+        shared_xaxes=False,  # Unlinked X-axes: zooming/panning affects only Price chart
         vertical_spacing=0.04,
         row_heights=row_heights
     )
 
-    # Row 1: Price Candlestick & Overlays (Price Axis on RIGHT)
+    # Row 1: Primary Candlestick Chart (Right-Facing Price Y-Axis)
     fig.add_trace(
         go.Candlestick(
             x=df_plot.index,
@@ -510,16 +537,35 @@ def render_deep_dive(ticker: str):
     )
 
     if show_sma20:
-        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot["SMA20"], name="20 SMA", line=dict(color="#1f77b4", width=1.4)), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(x=df_plot.index, y=df_plot["SMA20"], name="20 SMA", line=dict(color="#1f77b4", width=1.4)),
+            row=1, col=1
+        )
     if show_sma50:
-        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot["SMA50"], name="50 SMA", line=dict(color="#ff7f0e", width=1.4)), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(x=df_plot.index, y=df_plot["SMA50"], name="50 SMA", line=dict(color="#ff7f0e", width=1.4)),
+            row=1, col=1
+        )
     if show_vwap:
-        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot["VWAP"], name="VWAP", line=dict(color="#9467bd", width=1.3, dash="dot")), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(x=df_plot.index, y=df_plot["VWAP"], name="VWAP", line=dict(color="#9467bd", width=1.3, dash="dot")),
+            row=1, col=1
+        )
     if show_bb:
-        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot["BB_Upper"], name="BB Upper", line=dict(color="rgba(160,160,160,0.6)", width=1)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot["BB_Lower"], name="BB Lower", line=dict(color="rgba(160,160,160,0.6)", width=1), fill="tonexty", fillcolor="rgba(200,200,200,0.12)"), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(x=df_plot.index, y=df_plot["BB_Upper"], name="BB Upper", line=dict(color="rgba(160,160,160,0.65)", width=1)),
+            row=1, col=1
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df_plot.index, y=df_plot["BB_Lower"], name="BB Lower",
+                line=dict(color="rgba(160,160,160,0.65)", width=1),
+                fill="tonexty", fillcolor="rgba(200,200,200,0.12)"
+            ),
+            row=1, col=1
+        )
 
-    # Entry, SL, T1, T2 horizontal levels on Price pane
+    # Trade Execution Horizontal Levels on Price Pane
     levels = [
         (active_res["entry"], f"Entry {active_res['entry']}", "#26a69a", "solid"),
         (active_res["sl"], f"SL {active_res['sl']}", "#ef5350", "dash"),
@@ -537,36 +583,45 @@ def render_deep_dive(ticker: str):
             row=1, col=1
         )
 
-    # Configure Right-side Price Y-Axis
-    fig.update_yaxes(side="right", fixedrange=False, row=1, col=1)
+    # Right-Side Price Y-Axis & Interactive X-Axis
+    fig.update_yaxes(side="right", fixedrange=False, title_text="Price (₹)", row=1, col=1)
+    fig.update_xaxes(fixedrange=False, row=1, col=1)
 
     current_row = 2
 
-    # Volume Panel (Left Y-Axis, Fixedrange to prevent accidental zoom distortion)
+    # Volume Subplot (Left-Side Y-Axis, Locked X & Y Ranges)
     if show_vol:
         vol_colors = ["#26a69a" if c >= o else "#ef5350" for c, o in zip(df_plot["Close"], df_plot["Open"])]
         fig.add_trace(
             go.Bar(x=df_plot.index, y=df_plot["Volume"], name="Volume", marker_color=vol_colors, showlegend=False),
             row=current_row, col=1
         )
-        fig.update_yaxes(side="left", fixedrange=True, title_text="Vol", row=current_row, col=1)
+        fig.update_yaxes(side="left", fixedrange=True, title_text="Volume", row=current_row, col=1)
         fig.update_xaxes(fixedrange=True, showticklabels=(current_row == num_rows), row=current_row, col=1)
         current_row += 1
 
-    # RSI Panel (Left Y-Axis, Fixed 0-100 range with 40/60 Zones)
+    # RSI Subplot (Left-Side Y-Axis, Locked X & Y Ranges with 40/60 Zones)
     if show_rsi:
         fig.add_trace(
             go.Scatter(x=df_plot.index, y=df_plot["RSI"], name="RSI (14)", line=dict(color="#eab308", width=1.6), showlegend=False),
             row=current_row, col=1
         )
-        fig.add_hline(y=60, line_color="#26a69a", line_dash="dash", line_width=1.1, annotation_text="60 Bull Zone", annotation_position="top left", row=current_row, col=1)
-        fig.add_hline(y=40, line_color="#ef5350", line_dash="dash", line_width=1.1, annotation_text="40 Bear Zone", annotation_position="bottom left", row=current_row, col=1)
-        fig.update_yaxes(side="left", range=[20, 85], fixedrange=True, title_text="RSI", row=current_row, col=1)
+        fig.add_hline(
+            y=60, line_color="#26a69a", line_dash="dash", line_width=1.1,
+            annotation_text="60 Bull Zone", annotation_position="top left",
+            row=current_row, col=1
+        )
+        fig.add_hline(
+            y=40, line_color="#ef5350", line_dash="dash", line_width=1.1,
+            annotation_text="40 Bear Zone", annotation_position="bottom left",
+            row=current_row, col=1
+        )
+        fig.update_yaxes(side="left", range=[20, 85], fixedrange=True, title_text="RSI (14)", row=current_row, col=1)
         fig.update_xaxes(fixedrange=True, showticklabels=True, row=current_row, col=1)
 
     fig.update_layout(
-        height=640,
-        margin=dict(l=45, r=55, t=20, b=30),
+        height=650,
+        margin=dict(l=55, r=65, t=20, b=30),
         xaxis_rangeslider_visible=False,
         dragmode="pan",
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0.0),
@@ -580,7 +635,7 @@ def render_deep_dive(ticker: str):
     )
 
 # -----------------------------------------------------------------------------
-# ROUTER
+# 7. APPLICATION ROUTER
 # -----------------------------------------------------------------------------
 if st.session_state.selected_stock:
     render_deep_dive(st.session_state.selected_stock)
