@@ -113,7 +113,10 @@ def evaluate_timeframe(df: pd.DataFrame) -> dict:
     macd_val = float(macd_line.iloc[-1])
     sig_val = float(signal_line.iloc[-1])
     macd_act = "Buy" if macd_val > sig_val else "Sell"
-    if macd_act == "Buy": ind_buy += 1 else: ind_sell += 1
+    if macd_act == "Buy":
+        ind_buy += 1
+    else:
+        ind_sell += 1
     ind_details.append({"Indicator": "MACD (12,26)", "Value": round(macd_val, 2), "Action": macd_act})
 
     low14 = low.rolling(14).min()
@@ -142,13 +145,15 @@ def evaluate_timeframe(df: pd.DataFrame) -> dict:
 
     roc_val = float(((close.iloc[-1] - close.iloc[-13]) / close.iloc[-13]) * 100)
     roc_act = "Buy" if roc_val > 0 else "Sell"
-    if roc_act == "Buy": ind_buy += 1 else: ind_sell += 1
+    if roc_act == "Buy": ind_buy += 1
+    else: ind_sell += 1
     ind_details.append({"Indicator": "ROC (12)", "Value": round(roc_val, 2), "Action": roc_act})
 
     ema13 = float(close.ewm(span=13, adjust=False).mean().iloc[-1])
     bbp_val = float((high.iloc[-1] - ema13) + (low.iloc[-1] - ema13))
     bbp_act = "Buy" if bbp_val > 0 else "Sell"
-    if bbp_act == "Buy": ind_buy += 1 else: ind_sell += 1
+    if bbp_act == "Buy": ind_buy += 1
+    else: ind_sell += 1
     ind_details.append({"Indicator": "Bull/Bear Power (13)", "Value": round(bbp_val, 2), "Action": bbp_act})
 
     bb_mid = close.rolling(20).mean()
@@ -156,7 +161,8 @@ def evaluate_timeframe(df: pd.DataFrame) -> dict:
     bb_upper = bb_mid + 2 * bb_std
     bb_lower = bb_mid - 2 * bb_std
     bb_act = "Buy" if curr_price > float(bb_mid.iloc[-1]) else "Sell"
-    if bb_act == "Buy": ind_buy += 1 else: ind_sell += 1
+    if bb_act == "Buy": ind_buy += 1
+    else: ind_sell += 1
     ind_details.append({"Indicator": "Bollinger (20,2)", "Value": round(float(bb_mid.iloc[-1]), 2), "Action": bb_act})
 
     total_buy = ma_buy + ind_buy
