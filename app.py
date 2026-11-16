@@ -155,7 +155,6 @@ def get_ohlcv(symbol: str, tf: str) -> pd.DataFrame:
 # --- QUANTITATIVE INDICATORS, SUPPORT/RESISTANCE & CANDLESTICK RECOGNITION ---
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    # Wilder's RSI (14) + RSI EMA (9) for momentum slope
     delta = df["Close"].diff()
     gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
@@ -163,31 +162,26 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["RSI"] = 100 - (100 / (1 + rs))
     df["RSI_MA"] = df["RSI"].ewm(span=9, adjust=False).mean()
 
-    # Moving Average Ribbon
     df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
     df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
     df["SMA200"] = df["Close"].rolling(200, min_periods=50).mean()
 
-    # MACD (12, 26, 9)
     ema12 = df["Close"].ewm(span=12, adjust=False).mean()
     ema26 = df["Close"].ewm(span=26, adjust=False).mean()
     df["MACD"] = ema12 - ema26
     df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
     df["MACD_Hist"] = df["MACD"] - df["MACD_Signal"]
 
-    # Bollinger Bands (20, 2)
     sma20 = df["Close"].rolling(20).mean()
     std20 = df["Close"].rolling(20).std()
     df["BB_Upper"] = sma20 + 2 * std20
     df["BB_Lower"] = sma20 - 2 * std20
 
-    # Rolling VWAP (20)
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     vol = df["Volume"].replace(0, np.nan).fillna(1.0)
     df["VWAP"] = (tp * vol).rolling(20).sum() / vol.rolling(20).sum()
 
-    # ATR (14)
     tr = np.maximum(
         df["High"] - df["Low"],
         np.maximum(abs(df["High"] - df["Close"].shift(1)), abs(df["Low"] - df["Close"].shift(1))),
@@ -196,7 +190,6 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def detect_support_resistance(df: pd.DataFrame, lookback: int = 80, order: int = 4) -> dict:
-    """Identifies nearest institutional Support and Resistance zones via fractal pivot clustering."""
     if df.empty or len(df) < order * 2 + 5:
         close = float(df["Close"].iloc[-1]) if not df.empty else 0.0
         return {"support": close * 0.98, "resistance": close * 1.02, "s_strength": 1, "r_strength": 1}
@@ -250,13 +243,12 @@ def detect_support_resistance(df: pd.DataFrame, lookback: int = 80, order: int =
     }
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
-    """Detects high-probability institutional candlestick patterns on recent bars."""
     if df.empty or len(df) < 4:
         return {"name": "None", "bias": 0, "short": "—"}
 
-    c0 = df.iloc[-1]  # Current/latest bar
-    c1 = df.iloc[-2]  # Previous bar
-    c2 = df.iloc[-3]  # 2 bars ago
+    c0 = df.iloc[-1]
+    c1 = df.iloc[-2]
+    c2 = df.iloc[-3]
 
     def bar_stats(row):
         o, h, l, c = float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"])
@@ -271,19 +263,16 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
     o1, h1, l1, cl1, b1, r1, uw1, lw1, bull1 = bar_stats(c1)
     o2, h2, l2, cl2, b2, r2, uw2, lw2, bull2 = bar_stats(c2)
 
-    # 3-Bar Patterns: Morning Star / Evening Star
     if (not bull2) and b2 > r2 * 0.5 and b1 < r1 * 0.35 and bull0 and b0 > r0 * 0.5 and cl0 > (o2 + cl2) / 2:
         return {"name": "Morning Star", "bias": 2, "short": "MornStar"}
     if bull2 and b2 > r2 * 0.5 and b1 < r1 * 0.35 and (not bull0) and b0 > r0 * 0.5 and cl0 < (o2 + cl2) / 2:
         return {"name": "Evening Star", "bias": -2, "short": "EveStar"}
 
-    # 2-Bar Patterns: Bullish / Bearish Engulfing
     if (not bull1) and bull0 and cl0 >= o1 and o0 <= cl1 and b0 > b1 * 1.05:
         return {"name": "Bullish Engulfing", "bias": 2, "short": "BullEng"}
     if bull1 and (not bull0) and cl0 <= o1 and o0 >= cl1 and b0 > b1 * 1.05:
         return {"name": "Bearish Engulfing", "bias": -2, "short": "BearEng"}
 
-    # Single-Bar Rejection Patterns: Hammer / Shooting Star / Doji
     if lw0 >= b0 * 2.0 and uw0 <= b0 * 0.4 and b0 > r0 * 0.12:
         return {"name": "Hammer", "bias": 1, "short": "Hammer"}
     if uw0 >= b0 * 2.0 and lw0 <= b0 * 0.4 and b0 > r0 * 0.12:
@@ -294,7 +283,6 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
     return {"name": "None", "bias": 0, "short": "—"}
 
 def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
-    """ Evaluates a single timeframe combining all custom indicators. """
     if df.empty or len(df) < 26:
         return {
             "signal": "NEUTRAL", "css": "sig-neutral", "badge_col": "#787b86",
@@ -319,13 +307,11 @@ def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
 
     raw_score = 0.0
 
-    # 1. Moving Average Stack
     raw_score += 1.0 if close > ema20 else -1.0
     raw_score += 1.0 if ema20 > ema50 else -1.0
     raw_score += 0.75 if ema9 > ema20 else -0.75
     raw_score += 0.75 if close > sma200 else -0.75
 
-    # 2. Refined RSI + Momentum Slope + MACD
     if rsi >= 62 and rsi > rsi_ma:
         raw_score += 2.0
     elif rsi >= 53:
@@ -336,7 +322,6 @@ def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
         raw_score -= 1.0
     raw_score += 1.0 if macd > macd_sig else -1.0
 
-    # 3. Support / Resistance Structural Proximity
     dist_to_sup = close - sr["support"]
     dist_to_res = sr["resistance"] - close
     sr_tag = "Mid"
@@ -353,10 +338,8 @@ def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
         raw_score += 2.0
         sr_tag = "Broke R1"
 
-    # 4. Candlestick Pattern Confirmation
     raw_score += float(candle["bias"])
 
-    # 5. Top-Down Macro Regime Alignment Multiplier
     if macro_bias != 0:
         if (raw_score > 0 and macro_bias > 0) or (raw_score < 0 and macro_bias < 0):
             raw_score *= 1.25
@@ -567,14 +550,15 @@ else:
     sl_price = max(sr_chart["resistance"] + 0.3 * atr_val, curr_close + 1.5 * atr_val)
     t1_price = min(sr_chart["support"], curr_close - 2.2 * atr_val)
 
+p_col = "#089981" if pct_val >= 0 else "#f23645"
+p_sign = "+" if pct_val >= 0 else ""
+
 with top_l:
-    p_col = "#089981" if pct_val >= 0 else "#f23645"
-    p_sign = "+" if pct_val >= 0 else ""
     st.markdown(
         f"<div class='tv-topbar'>"
         f"<div><span class='tv-sym-title'>{active_lbl}</span> "
         f"<span style='color:#787b86; font-size:0.85rem;'>({active_sym}) · NSE</span></div>"
-        f"<div><span class='tv-price' style='color:{p_color};'>₹{curr_close:,.2f}</span> "
+        f"<div><span class='tv-price' style='color:{p_col};'>₹{curr_close:,.2f}</span> "
         f"<span style='color:{p_col}; font-size:0.92rem; font-weight:600;'>{p_sign}{chg_val:.2f} ({p_sign}{pct_val:.2f}%)</span></div>"
         f"</div>",
         unsafe_allow_html=True,
@@ -592,7 +576,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- DEDICATED TOP SECTION: MULTI-TIMEFRAME SIGNAL CARDS ---
+# --- DEDICATED TOP SECTION: MULTITIMEFRAME SIGNAL CARDS ---
 tf_cols = st.columns(len(ALL_TIMEFRAMES) + 1)
 for idx, tf in enumerate(ALL_TIMEFRAMES):
     r = mtf_results[tf]
@@ -797,4 +781,3 @@ fig.update_layout(
 )
 
 st.plotly_chart(fig, use_container_width=True)
-
