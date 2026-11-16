@@ -23,7 +23,7 @@ if "focus_mode" not in st.session_state:
     st.session_state.focus_mode = False
 
 # -----------------------------------------------------------------------------
-# CSS: STICKY TOP HEADER & FOCUS MODE OVERRIDES
+# CSS: STICKY TOP HEADER, FOCUS MODE & DIRECT CHART PINCH-ZOOM SUPPORT
 # -----------------------------------------------------------------------------
 focus_css = (
     """
@@ -57,6 +57,11 @@ st.markdown(
             padding-top: 6px;
             padding-bottom: 8px;
             border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+        }}
+        /* Route touch pinch-zoom & pan gestures directly to Plotly canvas */
+        .js-plotly-plot .plotly .nsewdrag,
+        .js-plotly-plot .plotly .drag {{
+            touch-action: none !important;
         }}
     </style>
     """,
@@ -755,7 +760,7 @@ if not chart_df.empty:
             row=current_row,
             col=1,
         )
-        fig.update_yaxes(title_text="Vol", row=current_row, col=1)
+        fig.update_yaxes(title_text="Vol", fixedrange=False, row=current_row, col=1)
         current_row += 1
 
     if show_rsi:
@@ -766,7 +771,7 @@ if not chart_df.empty:
         )
         fig.add_hline(y=70, line_dash="dash", line_color="#f23645", line_width=1, row=current_row, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="#089981", line_width=1, row=current_row, col=1)
-        fig.update_yaxes(title_text="RSI", range=[0, 100], row=current_row, col=1)
+        fig.update_yaxes(title_text="RSI", range=[0, 100], fixedrange=False, row=current_row, col=1)
 
     chart_height = 680 if st.session_state.focus_mode else 560
     fig.update_layout(
@@ -777,14 +782,16 @@ if not chart_df.empty:
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
     )
-    fig.update_xaxes(type="category", nticks=10, showgrid=True, gridcolor="rgba(0,0,0,0.05)")
-    fig.update_yaxes(side="right", showgrid=True, gridcolor="rgba(0,0,0,0.05)", row=1, col=1)
+    fig.update_xaxes(type="category", nticks=10, fixedrange=False, showgrid=True, gridcolor="rgba(0,0,0,0.05)")
+    fig.update_yaxes(side="right", fixedrange=False, showgrid=True, gridcolor="rgba(0,0,0,0.05)", row=1, col=1)
 
     st.plotly_chart(
         fig,
         use_container_width=True,
         config={
             "scrollZoom": True,
+            "doubleClick": "reset+autosize",
+            "responsive": True,
             "displayModeBar": True,
             "modeBarButtonsToAdd": ["drawline", "drawrect", "eraseshape"],
             "modeBarButtonsToRemove": ["lasso2d", "select2d"],
