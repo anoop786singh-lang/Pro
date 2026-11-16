@@ -425,11 +425,14 @@ def style_matrix(df: pd.DataFrame):
         try:
             v = float(val)
             if v >= 75.0:
-                return "background-color: #E6F4EA; color: #137333; font-weight: 700;"
+                # Distinct darker green background and bold text for high accuracy
+                return "background-color: #0d47a1; color: #ffffff; font-weight: 800; font-size: 1.1em;"
             elif v >= 60.0:
-                return "background-color: #FEF7E0; color: #B06000; font-weight: 600;"
+                # Distinct medium dark background for mid accuracy
+                return "background-color: #1565c0; color: #ffffff; font-weight: 800; font-size: 1.1em;"
             else:
-                return "background-color: #FCE8E6; color: #C5221F; font-weight: 600;"
+                # Distinct darker red/orange background for lower accuracy
+                return "background-color: #b71c1c; color: #ffffff; font-weight: 800; font-size: 1.1em;"
         except Exception:
             return ""
 
