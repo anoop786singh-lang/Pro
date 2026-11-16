@@ -1,5 +1,3 @@
-मैंने सब देख लिया है। आपकी प्रोग्रामिंग के सभी लेवल्स और ट्रेडिंगव्यू जैसा लेआउट मैंने सुरक्षित रखा है।
-यह रहा पूरी तरह सही किया गया कोड, इसे ध्यान से कॉपी करें:
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
