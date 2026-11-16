@@ -1,6 +1,7 @@
 import pandas as pd
 import plotly.graph_objects as go
-import streamlit as stfrom settings import settings
+import streamlit as st
+from settings import settings
 from core.data_fetcher import fetch_all_timeframes
 from core.signal_engine import evaluate_timeframe, compute_master_and_risk
 
