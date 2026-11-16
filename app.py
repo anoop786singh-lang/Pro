@@ -1,4 +1,3 @@
-समझ गया, आप ट्रेडिंगव्यू जैसा साफ़—सुथरा चार्ट चाहते हैं जिसमें बोलिंजर बैंड्स और आरएसआई सही से दिखें। मैं कोड को फिर से ठीक कर रही हूँ ताकि डेटा गैप्स न हों और—दिखावट बिल्कुल वैसी ही हो।. मैं आपके लिए ट्रेडिंगव्यू जैसा साफ़-सुथरा चार्ट लेआउट तैयार कर रही हूँ।.
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -66,7 +65,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- WATCHLIST UNIVERSE (INDICES & NIFTY EQUITIES) ---
+# --- WATCHLIST UNIVERSE ---
 WATCHLIST_ITEMS = [
     {"symbol": "^NSEI", "label": "NIFTY", "category": "Indices"},
     {"symbol": "^NSEBANK", "label": "BANKNIFTY", "category": "Indices"},
@@ -103,7 +102,7 @@ if "active_symbol" not in st.session_state:
 if "active_label" not in st.session_state:
     st.session_state.active_label = "NIFTY"
 
-# --- DATA FETCHING & MULTI-TIMEFRAME RESAMPLING ---
+# --- DATA FETCHING & RESAMPLING ---
 @st.cache_data(ttl=180)
 def get_ohlcv(symbol: str, tf: str) -> pd.DataFrame:
     try:
@@ -113,15 +112,14 @@ def get_ohlcv(symbol: str, tf: str) -> pd.DataFrame:
             raw = yf.download(symbol, period="60d", interval="15m", progress=False, auto_adjust=False)
             if not raw.empty:
                 df = raw.resample("45min").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}).dropna()
-            else:
-                return pd.DataFrame()
+            else: return pd.DataFrame()
         elif tf in ["1h", "2h", "4h"]:
             df = yf.download(symbol, period="730d", interval=tf, progress=False, auto_adjust=False)
         elif tf == "1d":
             df = yf.download(symbol, period="2y", interval="1d", progress=False, auto_adjust=False)
         elif tf == "1wk":
             df = yf.download(symbol, period="5y", interval="1wk", progress=False, auto_adjust=False)
-        else:  # 1mo
+        else:
             df = yf.download(symbol, period="10y", interval="1mo", progress=False, auto_adjust=False)
 
         if isinstance(df.columns, pd.MultiIndex):
@@ -135,49 +133,76 @@ def get_ohlcv(symbol: str, tf: str) -> pd.DataFrame:
     except Exception as e:
         return pd.DataFrame()
 
-# --- QUANTITATIVE INDICATORS, SUPPORT/RESISTANCE & CANDLESTICK RECOGNITION ---
+# --- INDICATORS & DYNAMIC LEVELS ---
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    # Wilder's RSI (14)
     delta = df["Close"].diff()
-    gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     rs = gain / loss.replace(0, np.nan)
     df["RSI"] = 100 - (100 / (1 + rs))
     df["RSI_MA"] = df["RSI"].ewm(span=9, adjust=False).mean()
 
-    # Moving Average Ribbon
     df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
     df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
     df["SMA200"] = df["Close"].rolling(200, min_periods=50).mean()
 
-    # MACD (12, 26, 9)
     ema12 = df["Close"].ewm(span=12, adjust=False).mean()
     ema26 = df["Close"].ewm(span=26, adjust=False).mean()
     df["MACD"] = ema12 - ema26
     df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
     df["MACD_Hist"] = df["MACD"] - df["MACD_Signal"]
 
-    # Bollinger Bands (20, 2)
     sma20 = df["Close"].rolling(20).mean()
     std20 = df["Close"].rolling(20).std()
     df["BB_Upper"] = sma20 + 2 * std20
     df["BB_Lower"] = sma20 - 2 * std20
     df["BB_Mid"] = sma20
 
-    # Rolling VWAP (20)
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     vol = df["Volume"].replace(0, np.nan).fillna(1.0)
     df["VWAP"] = (tp * vol).rolling(20).sum() / vol.rolling(20).sum()
 
-    # ATR (14)
-    tr = np.maximum(
-        df["High"] - df["Low"],
-        np.maximum(abs(df["High"] - df["Close"].shift(1)), abs(df["Low"] - df["Close"].shift(1))),
-    )
+    tr = np.maximum(df["High"] - df["Low"], np.maximum(abs(df["High"] - df["Close"].shift(1)), abs(df["Low"] - df["Close"].shift(1))))
     df["ATR"] = tr.rolling(14).mean()
     return df
+
+def calculate_dynamic_trade_levels(df: pd.DataFrame, bias_score: float) -> dict:
+    """Calculates dynamic Entry, Stop Loss, and Multi-Targets based on ATR and pivot extremes."""
+    if df.empty or "ATR" not in df.columns or np.isnan(df["ATR"].iloc[-1]):
+        c = float(df["Close"].iloc[-1]) if not df.empty else 100.0
+        return {"entry": c, "sl": c*0.98, "t1": c*1.015, "t2": c*1.03, "t3": c*1.05}
+
+    last = df.iloc[-1]
+    c = float(last["Close"])
+    h = float(last["High"])
+    l = float(last["Low"])
+    atr = float(last["ATR"])
+    
+    # Determine lookback local extremes for tighter stops
+    recent_high = float(df["High"].tail(20).max())
+    recent_low = float(df["Low"].tail(20).min())
+
+    if bias_score >= 0: # Bullish setup
+        entry = c
+        sl = min(l - 0.5 * atr, recent_low)
+        risk = c - sl
+        t1 = c + risk * 1.0
+        t2 = c + risk * 2.0
+        t3 = c + risk * 3.0
+    else: # Bearish setup
+        entry = c
+        sl = max(h + 0.5 * atr, recent_high)
+        risk = sl - c
+        t1 = c - risk * 1.0
+        t2 = c - risk * 2.0
+        t3 = c - risk * 3.0
+
+    return {
+        "entry": round(entry, 2), "sl": round(sl, 2),
+        "t1": round(t1, 2), "t2": round(t2, 2), "t3": round(t3, 2)
+    }
 
 def detect_support_resistance(df: pd.DataFrame, lookback: int = 80, order: int = 4) -> dict:
     if df.empty or len(df) < order * 2 + 5:
@@ -189,27 +214,20 @@ def detect_support_resistance(df: pd.DataFrame, lookback: int = 80, order: int =
     atr = float(sub["ATR"].iloc[-1]) if ("ATR" in sub.columns and not np.isnan(sub["ATR"].iloc[-1])) else close * 0.015
     tol = max(atr * 0.6, close * 0.004)
 
-    highs = sub["High"].values
-    lows = sub["Low"].values
-    pivot_highs = []
-    pivot_lows = []
+    highs, lows = sub["High"].values, sub["Low"].values
+    pivot_highs, pivot_lows = [], []
 
     for i in range(order, len(sub) - order):
-        if highs[i] == np.max(highs[i - order : i + order + 1]):
-            pivot_highs.append(float(highs[i]))
-        if lows[i] == np.min(lows[i - order : i + order + 1]):
-            pivot_lows.append(float(lows[i]))
+        if highs[i] == np.max(highs[i - order : i + order + 1]): pivot_highs.append(float(highs[i]))
+        if lows[i] == np.min(lows[i - order : i + order + 1]): pivot_lows.append(float(lows[i]))
 
     def cluster_levels(levels):
-        if not levels:
-            return []
+        if not levels: return []
         levels = sorted(levels)
         clusters = [[levels[0]]]
         for lv in levels[1:]:
-            if abs(lv - np.mean(clusters[-1])) <= tol:
-                clusters[-1].append(lv)
-            else:
-                clusters.append([lv])
+            if abs(lv - np.mean(clusters[-1])) <= tol: clusters[-1].append(lv)
+            else: clusters.append([lv])
         return [(float(np.mean(c)), len(c)) for c in clusters]
 
     res_clusters = [c for c in cluster_levels(pivot_highs) if c[0] > close * 0.998]
@@ -221,17 +239,10 @@ def detect_support_resistance(df: pd.DataFrame, lookback: int = 80, order: int =
     nearest_s = float(sub["Low"].min()) if not sup_clusters else min(sup_clusters, key=lambda x: abs(close - x[0]))
     s_str = 1 if not sup_clusters else min(sup_clusters, key=lambda x: abs(close - x[0]))[1]
 
-    return {
-        "support": round(nearest_s, 2),
-        "resistance": round(nearest_r, 2),
-        "s_strength": s_str,
-        "r_strength": r_str,
-    }
+    return {"support": round(nearest_s, 2), "resistance": round(nearest_r, 2), "s_strength": s_str, "r_strength": r_str}
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
-    if df.empty or len(df) < 4:
-        return {"name": "None", "bias": 0, "short": "—"}
-
+    if df.empty or len(df) < 4: return {"name": "None", "bias": 0, "short": "—"}
     c0, c1, c2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
 
     def bar_stats(row):
@@ -244,22 +255,13 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
     o1, h1, l1, cl1, b1, r1, uw1, lw1, bull1 = bar_stats(c1)
     o2, h2, l2, cl2, b2, r2, uw2, lw2, bull2 = bar_stats(c2)
 
-    if (not bull2) and b2 > r2*0.5 and b1 < r1*0.35 and bull0 and b0 > r0*0.5 and cl0 > (o2+cl2)/2:
-        return {"name": "Morning Star", "bias": 2, "short": "MornStar"}
-    if bull2 and b2 > r2*0.5 and b1 < r1*0.35 and (not bull0) and b0 > r0*0.5 and cl0 < (o2+cl2)/2:
-        return {"name": "Evening Star", "bias": -2, "short": "EveStar"}
-
-    if (not bull1) and bull0 and cl0 >= o1 and o0 <= cl1 and b0 > b1*1.05:
-        return {"name": "Bullish Engulfing", "bias": 2, "short": "BullEng"}
-    if bull1 and (not bull0) and cl0 <= o1 and o0 >= cl1 and b0 > b1*1.05:
-        return {"name": "Bearish Engulfing", "bias": -2, "short": "BearEng"}
-
-    if lw0 >= b0*2.0 and uw0 <= b0*0.4 and b0 > r0*0.12:
-        return {"name": "Hammer", "bias": 1, "short": "Hammer"}
-    if uw0 >= b0*2.0 and lw0 <= b0*0.4 and b0 > r0*0.12:
-        return {"name": "Shooting Star", "bias": -1, "short": "ShootStar"}
-    if b0 <= r0*0.10:
-        return {"name": "Doji Indecision", "bias": 0, "short": "Doji"}
+    if (not bull2) and b2 > r2*0.5 and b1 < r1*0.35 and bull0 and b0 > r0*0.5 and cl0 > (o2+cl2)/2: return {"name": "Morning Star", "bias": 2, "short": "MornStar"}
+    if bull2 and b2 > r2*0.5 and b1 < r1*0.35 and (not bull0) and b0 > r0*0.5 and cl0 < (o2+cl2)/2: return {"name": "Evening Star", "bias": -2, "short": "EveStar"}
+    if (not bull1) and bull0 and cl0 >= o1 and o0 <= cl1 and b0 > b1*1.05: return {"name": "Bullish Engulfing", "bias": 2, "short": "BullEng"}
+    if bull1 and (not bull0) and cl0 <= o1 and o0 >= cl1 and b0 > b1*1.05: return {"name": "Bearish Engulfing", "bias": -2, "short": "BearEng"}
+    if lw0 >= b0*2.0 and uw0 <= b0*0.4 and b0 > r0*0.12: return {"name": "Hammer", "bias": 1, "short": "Hammer"}
+    if uw0 >= b0*2.0 and lw0 <= b0*0.4 and b0 > r0*0.12: return {"name": "Shooting Star", "bias": -1, "short": "ShootStar"}
+    if b0 <= r0*0.10: return {"name": "Doji Indecision", "bias": 0, "short": "Doji"}
 
     return {"name": "None", "bias": 0, "short": "—"}
 
@@ -312,12 +314,20 @@ def evaluate_timeframe_signal(df: pd.DataFrame, macro_bias: int = 0) -> dict:
         elif (raw_score > 0 and macro_bias < 0) or (raw_score < 0 and macro_bias > 0): raw_score *= 0.75
 
     score = round(raw_score, 1)
+    
+    trade_levels = calculate_dynamic_trade_levels(df, score)
 
-    if score >= 5.5: return {"signal": "STRONG BUY", "css": "sig-strong-buy", "badge_col": "#089981", "score": score, "rsi": round(rsi, 1), "pattern": candle["short"], "sr_tag": sr_tag, "sr": sr, "candle_full": candle["name"]}
-    elif score >= 1.8: return {"signal": "BUY", "css": "sig-buy", "badge_col": "#2ecc71", "score": score, "rsi": round(rsi, 1), "pattern": candle["short"], "sr_tag": sr_tag, "sr": sr, "candle_full": candle["name"]}
-    elif score <= -5.5: return {"signal": "STRONG SELL", "css": "sig-strong-sell", "badge_col": "#f23645", "score": score, "rsi": round(rsi, 1), "pattern": candle["short"], "sr_tag": sr_tag, "sr": sr, "candle_full": candle["name"]}
-    elif score <= -1.8: return {"signal": "SELL", "css": "sig-sell", "badge_col": "#e74c3c", "score": score, "rsi": round(rsi, 1), "pattern": candle["short"], "sr_tag": sr_tag, "sr": sr, "candle_full": candle["name"]}
-    return {"signal": "NEUTRAL", "css": "sig-neutral", "badge_col": "#787b86", "score": score, "rsi": round(rsi, 1), "pattern": candle["short"], "sr_tag": sr_tag, "sr": sr, "candle_full": candle["name"]}
+    if score >= 5.5: sig_text = "STRONG BUY"
+    elif score >= 1.8: sig_text = "BUY"
+    elif score <= -5.5: sig_text = "STRONG SELL"
+    elif score <= -1.8: sig_text = "SELL"
+    else: sig_text = "NEUTRAL"
+
+    return {
+        "signal": sig_text, "css": f"sig-{sig_text.lower().replace(' ', '-')}",
+        "score": score, "rsi": round(rsi, 1), "pattern": candle["short"],
+        "sr_tag": sr_tag, "sr": sr, "levels": trade_levels
+    }
 
 def run_top_down_analysis(symbol: str) -> dict:
     df_1mo, df_1wk, df_1d = get_ohlcv(symbol, "1mo"), get_ohlcv(symbol, "1wk"), get_ohlcv(symbol, "1d")
@@ -427,14 +437,19 @@ with top_l:
 
 st.markdown(f"<div class='regime-bar'><div><span style='color:#787b86; font-weight:700;'>MACRO REGIME:</span> <span style='color:{td_analysis['regime_color']}; font-weight:700;'>{td_analysis['regime_label']}</span></div><div><span style='color:#787b86;'>SUPPORT:</span> <b style='color:#089981;'>₹{sr_chart['support']:,.2f}</b> | <span style='color:#787b86;'>RESISTANCE:</span> <b style='color:#f23645;'>₹{sr_chart['resistance']:,.2f}</b></div><div><span style='color:#787b86;'>CANDLE:</span> <b style='color:#ffffff;'>{candle_chart['name']}</b></div></div>", unsafe_allow_html=True)
 
-# MTF Cards
+# MTF Cards with Dynamic Signal Levels
 tf_cols = st.columns(len(ALL_TIMEFRAMES) + 1)
 for idx, tf in enumerate(ALL_TIMEFRAMES):
     r = mtf_results[tf]
+    lvl = r["levels"]
     with tf_cols[idx]:
-        st.markdown(f"<div class='mtf-card'><div class='mtf-tf'>{tf}</div><div class='mtf-sig {r['css']}'>{r['signal']}</div><div class='mtf-meta'>RSI {r['rsi']} · {r['sr_tag']}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='mtf-card'><div class='mtf-tf'>{tf}</div><div class='mtf-sig {r['css']}'>{r['signal']}</div><div class='mtf-meta'>Entry: {lvl['entry']}<br>SL: {lvl['sl']}<br>T1: {lvl['t1']}</div></div>", unsafe_allow_html=True)
+
 with tf_cols[-1]:
     st.markdown(f"<div class='mtf-card' style='border-color:#434651;'><div class='mtf-tf'>TOP-DOWN</div><div class='mtf-sig {td_analysis['master_css']}'>{td_analysis['master_sig']}</div><div class='mtf-meta'>Score {td_analysis['weighted_score']:+.2f}</div></div>", unsafe_allow_html=True)
+
+# Extract levels for the active selected timeframe chart
+active_levels = mtf_results[chart_tf]["levels"]
 
 # Toggles
 t1, t2, t3, t4, t5, t6 = st.columns(6)
@@ -460,7 +475,7 @@ else:
 if show_bb:
     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["BB_Upper"], line=dict(color="rgba(41, 98, 255, 0.4)", width=1), name="BB Upper"), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["BB_Lower"], line=dict(color="rgba(41, 98, 255, 0.4)", width=1, dash="dot"), fill='tonexty', fillcolor='rgba(41, 98, 255, 0.05)', name="BB Lower"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["BB_Mid"], line=dict(color="rgba(296, 255, 0.5)", width=1.5), name="BB Mid"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["BB_Mid"], line=dict(color="rgba(41, 98, 255, 0.5)", width=1.5), name="BB Mid"), row=1, col=1)
 
 if show_ema:
     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["EMA20"], line=dict(color="#2962ff", width=1.5), name="EMA 20"), row=1, col=1)
@@ -469,9 +484,16 @@ if show_ema:
 if show_vwap:
     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["VWAP"], line=dict(color="#e040fb", width=1.5, dash="dot"), name="VWAP"), row=1, col=1)
 
+# Dynamic Trade Levels Overlay
+fig.add_hline(y=active_levels["entry"], line_dash="solid", line_color="#2962ff", line_width=1.5, row=1, col=1, annotation_text=f"ENTRY: {active_levels['entry']}")
+fig.add_hline(y=active_levels["sl"], line_dash="dash", line_color="#f23645", line_width=1.5, row=1, col=1, annotation_text=f"SL: {active_levels['sl']}")
+fig.add_hline(y=active_levels["t1"], line_dash="dot", line_color="#089981", line_width=1.5, row=1, col=1, annotation_text=f"T1: {active_levels['t1']}")
+fig.add_hline(y=active_levels["t2"], line_dash="dot", line_color="#089981", line_width=1.5, row=1, col=1, annotation_text=f"T2: {active_levels['t2']}")
+fig.add_hline(y=active_levels["t3"], line_dash="dot", line_color="#089981", line_width=1.5, row=1, col=1, annotation_text=f"T3: {active_levels['t3']}")
+
 if show_sr:
-    fig.add_hline(y=sr_chart["resistance"], line_dash="dash", line_color="#f23645", line_width=1.5, row=1, col=1)
-    fig.add_hline(y=sr_chart["support"], line_dash="dash", line_color="#089981", line_width=1.5, row=1, col=1)
+    fig.add_hline(y=sr_chart["resistance"], line_dash="dash", line_color="#f23645", line_width=1.5, opacity=0.5, row=1, col=1)
+    fig.add_hline(y=sr_chart["support"], line_dash="dash", line_color="#089981", line_width=1.5, opacity=0.5, row=1, col=1)
 
 curr_row = 2
 if show_rsi:
@@ -499,4 +521,3 @@ fig.update_layout(
 )
 
 st.plotly_chart(fig, use_container_width=True)
-
