@@ -72,7 +72,7 @@ class DatabaseManager:
             df = pd.read_sql_query(query, conn, parse_dates=['timestamp'], index_col='timestamp')
         return df
 
-# --- 3. UTILITIES & MARKET HOURS ---
+# --- 3. UTILITIES & ROBUST DATA FETCHING ---
 def check_market_live() -> tuple[bool, str]:
     now_ist = datetime.now(pd.Timestamp("Asia/Kolkata").tz)
     if now_ist.weekday() >= 5:
@@ -129,6 +129,7 @@ class DataFetcher:
         if not cached_df.empty:
             return cached_df
 
+        # Fallback Generator
         try:
             base = 25000.0 if "^NSEI" in symbol else (50000.0 if "BANK" in symbol else 1500.0)
             idx = pd.date_range(end=datetime.now(), periods=120, freq="H")
