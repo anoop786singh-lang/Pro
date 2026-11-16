@@ -1,3 +1,4 @@
+import concurrent.futures
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -48,7 +49,6 @@ st.markdown(
             text-align: center;
             display: inline-block;
         }}
-        /* Sticky top header container */
         div[data-testid="stVerticalBlock"] > div:has(div.sticky-anchor) {{
             position: sticky;
             top: { '0px' if st.session_state.focus_mode else '2.8rem' };
@@ -64,35 +64,36 @@ st.markdown(
 )
 
 # -----------------------------------------------------------------------------
-# WATCHLIST & EXTENDED MULTI-TIMEFRAME CONFIGURATION
+# TOP 200 NSE EQUITY UNIVERSE & MULTI-TIMEFRAME CONFIGURATION
 # -----------------------------------------------------------------------------
-WATCHLIST = {
-    "NIFTY 50": "^NSEI",
-    "BANK NIFTY": "^NSEBANK",
-    "RELIANCE": "RELIANCE.NS",
-    "HDFCBANK": "HDFCBANK.NS",
-    "INFY": "INFY.NS",
-    "TCS": "TCS.NS",
-    "ICICIBANK": "ICICIBANK.NS",
-    "SBIN": "SBIN.NS",
-    "BHARTIARTL": "BHARTIARTL.NS",
-    "ITC": "ITC.NS",
-    "LT": "LT.NS",
-    "AXISBANK": "AXISBANK.NS",
-    "KOTAKBANK": "KOTAKBANK.NS",
-    "TATAMOTORS": "TATAMOTORS.NS",
-    "SUNPHARMA": "SUNPHARMA.NS",
-    "MARUTI": "MARUTI.NS",
-    "TITAN": "TITAN.NS",
-    "BAJFINANCE": "BAJFINANCE.NS",
-    "HINDUNILVR": "HINDUNILVR.NS",
-    "NTPC": "NTPC.NS",
-    "TATASTEEL": "TATASTEEL.NS",
-    "VEDL": "VEDL.NS",
-    "ADANIENT": "ADANIENT.NS",
-    "WIPRO": "WIPRO.NS",
-    "HCLTECH": "HCLTECH.NS",
-}
+TOP_200_SYMBOLS = [
+    "RELIANCE", "TCS", "HDFCBANK", "BHARTIARTL", "ICICIBANK", "INFY", "SBIN", "HINDUNILVR",
+    "ITC", "LT", "HCLTECH", "BAJFINANCE", "SUNPHARMA", "MARUTI", "M&M", "KOTAKBANK",
+    "AXISBANK", "TITAN", "ONGC", "ADANIENT", "NTPC", "TATAMOTORS", "ULTRACEMCO", "POWERGRID",
+    "BAJAJFINSV", "ADANIPORTS", "COALINDIA", "ASIANPAINT", "WIPRO", "DMART", "HAL", "SIEMENS",
+    "TRENT", "BEL", "JSWSTEEL", "NESTLEIND", "IOC", "VBL", "DLF", "IRFC", "TATASTEEL",
+    "JIOFIN", "ZOMATO", "GRASIM", "LTIM", "TECHM", "PIDILITIND", "HINDZINC", "SBILIFE",
+    "PFC", "ADANIPOWER", "RECLTD", "ADANIGREEN", "HDFCLIFE", "INDIGO", "BANKBARODA", "GAIL",
+    "AMBUJACEM", "BPCL", "CIPLA", "EICHERMOT", "DIVISLAB", "ABB", "BRITANNIA", "PNB",
+    "CHOLAFIN", "TVSMOTOR", "VEDL", "SHREECEM", "TATAPOWER", "BAJAJ-AUTO", "GODREJCP", "HAVELLS",
+    "LODHA", "MANKIND", "DRREDDY", "UNIONBANK", "CANBK", "APOLLOHOSP", "CGPOWER", "DABUR",
+    "HEROMOTOCO", "ICICIPRULI", "INDHOTEL", "JINDALSTEL", "MARICO", "MAXHEALTH", "MOTHERSON",
+    "NAUKRI", "NHPC", "OBEROIRLTY", "OFSS", "PERSISTENT", "POLYCAB", "SHRIRAMFIN", "SOLARINDS",
+    "SRF", "SUNDARMFIN", "SUPREMEIND", "TATACONSUM", "TATAELXSI", "TORNTPHARM", "TORNTPR",
+    "TRIDENT", "UBL", "UNITDSPR", "UPL", "VOLTAS", "YESBANK", "ZYDUSLIFE", "ACC", "ALKEM",
+    "ASHOKLEY", "ASTRAL", "ATUL", "AUBANK", "AUROPHARMA", "BALKRISIND", "BANDHANBNK", "BATAINDIA",
+    "BERGEPAINT", "BHARATFORG", "BHEL", "BIOCON", "BOSCHLTD", "BSE", "CDSL", "CENTRALBK",
+    "CESC", "CHAMBLFERT", "COFORGE", "COLPAL", "CONCOR", "COROMANDEL", "CROMPTON", "CUMMINSIND",
+    "DALBHARAT", "DEEPAKNTR", "DELHIVERY", "DEVYANI", "DIXON", "ESCORTS", "EXIDEIND", "FEDERALBNK",
+    "FORTIS", "GLAND", "GLAXO", "GMRINFRA", "GODREJPROP", "GRANULES", "GUJGASLTD", "HDFCAMC",
+    "HINDPETRO", "HONAUT", "IDFCFIRSTB", "IGL", "INDIANB", "INDUSTOWER", "IPCALAB", "IRCTC",
+    "ISEC", "JKCEMENT", "JSL", "JSWENERGY", "JUBLFOOD", "KALYANKJIL", "KEI", "KPITTECH",
+    "L&TFH", "LALPATHLAB", "LAURUSLABS", "LICHSGFIN", "LICI", "LTTS", "LUPIN", "M&MFIN",
+    "MAHABANK", "MAZDOCK", "MCX", "METROBRAND", "MFSL", "MGL", "MPHASIS", "MRF", "MUTHOOTFIN",
+    "NATIONALUM", "NAVINFLUOR", "NMDC", "NUVOCO", "OIL", "PAGEIND", "PATANJALI", "PAYTM",
+    "PETRONET", "PIIND", "POLICYBZR", "POONAWALLA", "PRESTIGE", "PVRINOX", "RAMCOCEM", "RBLBANK",
+]
+TOP_200_UNIVERSE = {sym: f"{sym}.NS" for sym in TOP_200_SYMBOLS[:200]}
 
 # (fetch_interval, fetch_period, resample_rule_or_None)
 TIMEFRAME_MAP = {
@@ -102,10 +103,13 @@ TIMEFRAME_MAP = {
     "1H": ("1h", "60d", None),
     "2H": ("1h", "90d", "2h"),
     "4H": ("1h", "180d", "4h"),
-    "1D": ("1d", "1y", None),
-    "1WK": ("1wk", "3y", None),
-    "1MO": ("1mo", "5y", None),
+    "1D": ("1d", "max", None),
+    "1WK": ("1wk", "max", None),
+    "1MO": ("1mo", "max", None),
 }
+
+TF_WEIGHTS = {"15M": 1, "30M": 1, "45M": 1, "1H": 2, "2H": 2, "4H": 2, "1D": 3, "1WK": 3, "1MO": 4}
+MAX_POSSIBLE_WEIGHTED_SCORE = sum(3 * w for w in TF_WEIGHTS.values())  # 63
 
 # -----------------------------------------------------------------------------
 # TECHNICAL INDICATORS, CONFLUENCE & ACCURACY ENGINE
@@ -172,7 +176,6 @@ def evaluate_signal(df: pd.DataFrame) -> tuple[str, int, float, float]:
     factors_aligned = 0
     total_factors = 6
 
-    # 1. 20 SMA Trend
     if last["Close"] > last["SMA20"]:
         score += 1
         factors_aligned += 1
@@ -180,14 +183,12 @@ def evaluate_signal(df: pd.DataFrame) -> tuple[str, int, float, float]:
         score -= 1
         factors_aligned += 1
 
-    # 2. 50 SMA Higher Structure
     if pd.notna(last.get("SMA50")):
         if last["Close"] > last["SMA50"] and score > 0:
             factors_aligned += 1
         elif last["Close"] < last["SMA50"] and score < 0:
             factors_aligned += 1
 
-    # 3. RSI Momentum
     rsi_val = float(last["RSI"]) if pd.notna(last["RSI"]) else 50.0
     if rsi_val >= 58:
         score += 1
@@ -198,7 +199,6 @@ def evaluate_signal(df: pd.DataFrame) -> tuple[str, int, float, float]:
         if score < 0:
             factors_aligned += 1
 
-    # 4. Bollinger Band Breakout / Mean Reversion
     if last["Close"] > last["BB_Upper"] or (prev["Close"] < prev["BB_Lower"] and last["Close"] > last["BB_Lower"]):
         score += 1
         factors_aligned += 1
@@ -206,11 +206,9 @@ def evaluate_signal(df: pd.DataFrame) -> tuple[str, int, float, float]:
         score -= 1
         factors_aligned += 1
 
-    # 5. Volume Confirmation
     if pd.notna(last.get("Vol_SMA20")) and last["Vol_SMA20"] > 0 and last["Volume"] >= last["Vol_SMA20"]:
         factors_aligned += 1
 
-    # 6. Support / Resistance Breakout & Candle Confirmation
     if last["Close"] > last["Open"] and (last["Close"] > prev["High"] or (pd.notna(last.get("Res20")) and last["Close"] > last["Res20"])):
         score += 1
         factors_aligned += 1
@@ -254,39 +252,82 @@ def calculate_trade_levels(df: pd.DataFrame, signal: str) -> dict:
     return {"entry": round(entry, 2), "sl": sl, "t1": t1, "t2": t2}
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_ohlcv(symbol: str, tf_label: str) -> pd.DataFrame:
+# -----------------------------------------------------------------------------
+# BATCHED BULK DOWNLOAD & TOP 200 -> TOP 50 SCANNER ENGINE
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=600, show_spinner=False)
+def bulk_download_universe_tf(tf_label: str) -> dict[str, pd.DataFrame]:
     interval, period, resample_rule = TIMEFRAME_MAP[tf_label]
-    df = yf.download(symbol, interval=interval, period=period, progress=False, auto_adjust=True)
-    if df.empty:
-        return df
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    if resample_rule:
-        df = resample_ohlcv(df, resample_rule)
-    return compute_indicators(df)
+    scan_period = {"15M": "15d", "30M": "30d", "45M": "30d", "1H": "60d", "2H": "60d", "4H": "90d", "1D": "2y", "1WK": "5y", "1MO": "10y"}[tf_label]
+    symbols_list = list(TOP_200_UNIVERSE.values())
+
+    raw = yf.download(
+        tickers=symbols_list,
+        interval=interval,
+        period=scan_period,
+        group_by="ticker",
+        threads=True,
+        progress=False,
+        auto_adjust=True,
+    )
+
+    result = {}
+    if raw is None or raw.empty:
+        return result
+
+    for name, sym in TOP_200_UNIVERSE.items():
+        try:
+            if isinstance(raw.columns, pd.MultiIndex):
+                if sym not in raw.columns.get_level_values(0):
+                    continue
+                sub = raw[sym].dropna(how="all")
+            else:
+                sub = raw.dropna(how="all")
+
+            if sub.empty or len(sub) < 25:
+                continue
+            if resample_rule:
+                sub = resample_ohlcv(sub, resample_rule)
+            result[name] = compute_indicators(sub)
+        except Exception:
+            continue
+    return result
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def build_full_matrix() -> pd.DataFrame:
+@st.cache_data(ttl=600, show_spinner="Scanning Top 200 NSE stocks across 9 timeframes...")
+def scan_top_50_opportunities() -> pd.DataFrame:
+    tf_data_map = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(bulk_download_universe_tf, tf): tf for tf in TIMEFRAME_MAP.keys()}
+        for fut in concurrent.futures.as_completed(futures):
+            tf_name = futures[fut]
+            try:
+                tf_data_map[tf_name] = fut.result()
+            except Exception:
+                tf_data_map[tf_name] = {}
+
     rows = []
-    weights = {"15M": 1, "30M": 1, "45M": 1, "1H": 2, "2H": 2, "4H": 2, "1D": 3, "1WK": 3, "1MO": 4}
-    for name, symbol in WATCHLIST.items():
+    for name, symbol in TOP_200_UNIVERSE.items():
         tf_signals = {}
         weighted_score = 0
         acc_list = []
-        daily_df = None
+        daily_df = tf_data_map.get("1D", {}).get(name)
         daily_rsi = np.nan
 
         for tf_label in TIMEFRAME_MAP.keys():
-            df = fetch_ohlcv(symbol, tf_label)
+            df = tf_data_map.get(tf_label, {}).get(name)
             sig, sc, rsi_val, acc = evaluate_signal(df)
             tf_signals[tf_label] = sig
-            weighted_score += sc * weights[tf_label]
+            weighted_score += sc * TF_WEIGHTS[tf_label]
             acc_list.append(acc)
             if tf_label == "1D":
-                daily_df = df
                 daily_rsi = rsi_val
+
+        if daily_df is None or daily_df.empty:
+            continue
+
+        confluence_score = round((weighted_score / MAX_POSSIBLE_WEIGHTED_SCORE) * 100.0, 1)
+        abs_strength = abs(confluence_score)
 
         if weighted_score >= 22:
             overall = "STRONG BUY"
@@ -300,19 +341,16 @@ def build_full_matrix() -> pd.DataFrame:
             overall = "NEUTRAL"
 
         overall_acc = round(float(np.mean(acc_list)), 1) if acc_list else 50.0
-
-        if daily_df is not None and not daily_df.empty:
-            levels = calculate_trade_levels(daily_df, overall)
-            ltp = levels["entry"]
-        else:
-            levels = {"entry": np.nan, "sl": np.nan, "t1": np.nan, "t2": np.nan}
-            ltp = np.nan
+        levels = calculate_trade_levels(daily_df, overall)
+        ltp = levels["entry"]
 
         rows.append(
             {
                 "Stock": name,
                 "Symbol": symbol,
                 "LTP": ltp,
+                "Confluence": confluence_score,
+                "AbsStrength": abs_strength,
                 "15M": tf_signals["15M"],
                 "30M": tf_signals["30M"],
                 "45M": tf_signals["45M"],
@@ -331,7 +369,33 @@ def build_full_matrix() -> pd.DataFrame:
                 "T2": levels["t2"],
             }
         )
-    return pd.DataFrame(rows)
+
+    full_df = pd.DataFrame(rows)
+    if full_df.empty:
+        return full_df
+
+    actionable = full_df[full_df["Master Signal"] != "NEUTRAL"].copy()
+    if len(actionable) >= 50:
+        top50 = actionable.sort_values(by=["AbsStrength", "Accuracy %"], ascending=[False, False]).head(50)
+    else:
+        top50 = full_df.sort_values(by=["AbsStrength", "Accuracy %"], ascending=[False, False]).head(50)
+
+    top50 = top50.drop(columns=["AbsStrength"]).reset_index(drop=True)
+    top50.insert(0, "Rank", range(1, len(top50) + 1))
+    return top50
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_ohlcv(symbol: str, tf_label: str) -> pd.DataFrame:
+    interval, period, resample_rule = TIMEFRAME_MAP[tf_label]
+    df = yf.download(symbol, interval=interval, period=period, progress=False, auto_adjust=True)
+    if df.empty:
+        return df
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    if resample_rule:
+        df = resample_ohlcv(df, resample_rule)
+    return compute_indicators(df)
 
 
 def style_matrix(df: pd.DataFrame):
@@ -354,6 +418,7 @@ def style_matrix(df: pd.DataFrame):
         .format(
             {
                 "LTP": "{:,.2f}",
+                "Confluence": "{:+.1f}%",
                 "Accuracy %": "{:.1f}%",
                 "RSI (14)": "{:.2f}",
                 "Entry": "{:,.2f}",
@@ -367,21 +432,21 @@ def style_matrix(df: pd.DataFrame):
 
 
 # -----------------------------------------------------------------------------
-# FULL-PAGE MODAL DIALOG FOR EXCEL-LIKE MATRIX
+# FULL-PAGE MODAL DIALOG FOR EXCEL-LIKE TOP 50 MATRIX
 # -----------------------------------------------------------------------------
-@st.dialog("Full-Page Multi-Timeframe Signal Matrix", width="large")
+@st.dialog("Top 50 MTF Opportunities (Scanned from Top 200 Stocks)", width="large")
 def open_full_page_matrix(matrix_df: pd.DataFrame):
     f1, f2, f3 = st.columns([2, 2, 3])
     with f1:
         sig_filter = st.multiselect(
             "Filter Master Signal",
-            ["STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL"],
+            ["STRONG BUY", "BUY", "SELL", "STRONG SELL", "NEUTRAL"],
             default=[],
         )
     with f2:
-        search_txt = st.text_input("Search Stock", placeholder="e.g., RELIANCE, TCS")
+        search_txt = st.text_input("Search Stock", placeholder="e.g., RELIANCE, HAL")
     with f3:
-        st.caption("Select any row to load its interactive chart and trade levels immediately.")
+        st.caption("Ranked by Multi-Timeframe Confluence Strength. Click any row to load its chart.")
 
     filtered = matrix_df.copy()
     if sig_filter:
@@ -408,8 +473,13 @@ def open_full_page_matrix(matrix_df: pd.DataFrame):
 
 
 # -----------------------------------------------------------------------------
-# SIDEBAR: RISK SETTINGS & SCROLLABLE WATCHLIST
+# RUN SCANNER & SIDEBAR TOP 50 WATCHLIST
 # -----------------------------------------------------------------------------
+matrix_df = scan_top_50_opportunities()
+active_universe_names = matrix_df["Stock"].tolist() if not matrix_df.empty else list(TOP_200_UNIVERSE.keys())
+if st.session_state.selected_ticker not in TOP_200_UNIVERSE:
+    st.session_state.selected_ticker = active_universe_names[0]
+
 capital = 100000.0
 risk_pct = 1.0
 
@@ -419,33 +489,33 @@ with st.sidebar:
     risk_pct = st.slider("Risk per Trade (%)", min_value=0.25, max_value=5.0, value=1.0, step=0.25)
 
     st.divider()
-    st.subheader("Watchlist")
-    if st.button("Refresh All Signals", use_container_width=True):
+    st.subheader("Top 50 MTF Watchlist")
+    if st.button("Rescan Top 200 Stocks", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
-    matrix_df = build_full_matrix()
-
-    for _, row in matrix_df.iterrows():
-        stock_name = row["Stock"]
-        msig = row["Master Signal"]
-        badge = "🟢" if "BUY" in msig else ("🔴" if "SELL" in msig else "⚪")
-        btn_type = "primary" if stock_name == st.session_state.selected_ticker else "secondary"
-        if st.button(
-            f"{badge} {stock_name}  |  {msig}",
-            key=f"wl_{stock_name}",
-            use_container_width=True,
-            type=btn_type,
-        ):
-            st.session_state.selected_ticker = stock_name
-            st.rerun()
+    if not matrix_df.empty:
+        for _, row in matrix_df.iterrows():
+            stock_name = row["Stock"]
+            msig = row["Master Signal"]
+            conf_val = row["Confluence"]
+            badge = "🟢" if "BUY" in msig else ("🔴" if "SELL" in msig else "⚪")
+            btn_type = "primary" if stock_name == st.session_state.selected_ticker else "secondary"
+            if st.button(
+                f"#{int(row['Rank'])} {badge} {stock_name} ({conf_val:+.0f}%)",
+                key=f"wl_{stock_name}",
+                use_container_width=True,
+                type=btn_type,
+            ):
+                st.session_state.selected_ticker = stock_name
+                st.rerun()
 
 
 # -----------------------------------------------------------------------------
-# PERSISTENT STICKY TOP NAVIGATION & CONTROL BAR
+# PERSISTENT STICKY TOP NAVIGATION & INTEGRATED CHART CONTROLS
 # -----------------------------------------------------------------------------
-ticker_names = list(WATCHLIST.keys())
-curr_idx = ticker_names.index(st.session_state.selected_ticker)
+dropdown_tickers = active_universe_names if st.session_state.selected_ticker in active_universe_names else [st.session_state.selected_ticker] + active_universe_names
+curr_idx = dropdown_tickers.index(st.session_state.selected_ticker)
 
 sticky_header = st.container()
 with sticky_header:
@@ -455,14 +525,14 @@ with sticky_header:
     )
 
     with nav_prev:
-        if st.button("◀", help="Previous Stock", use_container_width=True):
-            st.session_state.selected_ticker = ticker_names[(curr_idx - 1) % len(ticker_names)]
+        if st.button("◀", help="Previous Top-50 Stock", use_container_width=True):
+            st.session_state.selected_ticker = dropdown_tickers[(curr_idx - 1) % len(dropdown_tickers)]
             st.rerun()
 
     with nav_sym:
         selected_stock = st.selectbox(
             "Active Symbol",
-            ticker_names,
+            dropdown_tickers,
             index=curr_idx,
             label_visibility="collapsed",
         )
@@ -471,8 +541,8 @@ with sticky_header:
             st.rerun()
 
     with nav_next:
-        if st.button("▶", help="Next Stock", use_container_width=True):
-            st.session_state.selected_ticker = ticker_names[(curr_idx + 1) % len(ticker_names)]
+        if st.button("▶", help="Next Top-50 Stock", use_container_width=True):
+            st.session_state.selected_ticker = dropdown_tickers[(curr_idx + 1) % len(dropdown_tickers)]
             st.rerun()
 
     with nav_tf:
@@ -487,7 +557,7 @@ with sticky_header:
             st.session_state.selected_tf = selected_tf
             st.rerun()
 
-    symbol = WATCHLIST[st.session_state.selected_ticker]
+    symbol = TOP_200_UNIVERSE[st.session_state.selected_ticker]
     chart_df = fetch_ohlcv(symbol, st.session_state.selected_tf)
     tf_signal, tf_score, tf_rsi, tf_acc = evaluate_signal(chart_df)
 
@@ -515,7 +585,7 @@ with sticky_header:
         )
 
     with nav_mat:
-        if st.button("⤢ MTF Matrix", use_container_width=True, type="primary"):
+        if st.button("⤢ Top 50 Matrix", use_container_width=True, type="primary"):
             open_full_page_matrix(matrix_df)
 
     with nav_focus:
@@ -524,7 +594,6 @@ with sticky_header:
             st.session_state.focus_mode = not st.session_state.focus_mode
             st.rerun()
 
-    # Quick-click Timeframe Strip directly inside sticky header for 1-tap switching
     qtf_cols = st.columns(len(TIMEFRAME_MAP))
     for idx_tf, tf_btn in enumerate(TIMEFRAME_MAP.keys()):
         is_active_tf = tf_btn == st.session_state.selected_tf
@@ -546,13 +615,13 @@ show_vol = t2_col.toggle("Volume", value=True)
 show_rsi = t3_col.toggle("RSI (14)", value=True)
 show_levels = t4_col.toggle("Trade Levels", value=True)
 show_fib = t5_col.toggle("Auto Fib", value=False)
-bars_to_show = t6_col.selectbox("Bars", [60, 120, 200, 300], index=1, label_visibility="collapsed")
+bars_option = t6_col.selectbox("Bars", ["120", "250", "500", "ALL (Max History)"], index=1, label_visibility="collapsed")
 
 # -----------------------------------------------------------------------------
-# INTERACTIVE CANDLESTICK CHART WITH PERSISTENT TRADE LEVELS
+# INTERACTIVE CANDLESTICK CHART WITH PERSISTENT TRADE LEVELS & LIVE BADGE
 # -----------------------------------------------------------------------------
 if not chart_df.empty:
-    plot_df = chart_df.tail(bars_to_show).copy()
+    plot_df = chart_df.copy() if bars_option.startswith("ALL") else chart_df.tail(int(bars_option)).copy()
     levels = calculate_trade_levels(chart_df, tf_signal)
 
     risk_amount = capital * (risk_pct / 100.0)
@@ -660,6 +729,24 @@ if not chart_df.empty:
                 col=1,
             )
 
+    badge_bg = "#198754" if "BUY" in tf_signal else ("#dc3545" if "SELL" in tf_signal else "#495057")
+    fig.add_annotation(
+        xref="paper",
+        yref="paper",
+        x=0.01,
+        y=0.98,
+        xanchor="left",
+        yanchor="top",
+        text=f"<b>{st.session_state.selected_ticker} ({st.session_state.selected_tf})</b>  |  <b>{tf_signal}</b> ({tf_acc}%)",
+        showarrow=False,
+        font=dict(color="#ffffff", size=12),
+        bgcolor=badge_bg,
+        bordercolor=badge_bg,
+        borderwidth=4,
+        borderpad=5,
+        opacity=0.92,
+    )
+
     current_row = 2
     if show_vol:
         vol_colors = ["#089981" if c >= o else "#f23645" for c, o in zip(plot_df["Close"], plot_df["Open"])]
@@ -705,20 +792,27 @@ if not chart_df.empty:
     )
 
 # -----------------------------------------------------------------------------
-# COLLAPSIBLE EXCEL-LIKE MTF SIGNAL MATRIX & BACKTEST TABS (HIDDEN IN FOCUS MODE)
+# COLLAPSIBLE EXCEL-LIKE TOP 50 MTF SIGNAL MATRIX & BACKTEST TABS
 # -----------------------------------------------------------------------------
-if not st.session_state.focus_mode:
-    with st.expander("⤢ Excel-Style Multi-Timeframe Signal Matrix (All Watchlist Stocks)", expanded=True):
-        m_col1, m_col2 = st.columns([5, 1.5])
-        m_col1.caption("Click any row to switch the active chart above without losing your workspace.")
-        if m_col2.button("Open Full-Screen View ⤢", key="expander_modal_btn", use_container_width=True):
+if not st.session_state.focus_mode and not matrix_df.empty:
+    with st.expander("⤢ Top 50 Strongest Buy/Sell Matrix (Scanned from Top 200 NSE Stocks)", expanded=True):
+        m_col1, m_col2, m_col3 = st.columns([4, 1.5, 1.5])
+        m_col1.caption("Dynamically ranked by Multi-Timeframe Confluence Score across 9 timeframes. Click any row to load its chart.")
+        side_filter = m_col2.selectbox("Filter Side", ["All Top 50", "Buy Opportunities", "Sell Opportunities"], label_visibility="collapsed")
+        if m_col3.button("Open Full-Screen View ⤢", key="expander_modal_btn", use_container_width=True):
             open_full_page_matrix(matrix_df)
 
-        inline_df = matrix_df.drop(columns=["Symbol"]).reset_index(drop=True)
+        filtered_inline = matrix_df.copy()
+        if side_filter == "Buy Opportunities":
+            filtered_inline = filtered_inline[filtered_inline["Master Signal"].isin(["STRONG BUY", "BUY"])]
+        elif side_filter == "Sell Opportunities":
+            filtered_inline = filtered_inline[filtered_inline["Master Signal"].isin(["STRONG SELL", "SELL"])]
+
+        inline_df = filtered_inline.drop(columns=["Symbol"]).reset_index(drop=True)
         inline_sel = st.dataframe(
             style_matrix(inline_df),
             use_container_width=True,
-            height=420,
+            height=450,
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row",
@@ -775,7 +869,7 @@ if not st.session_state.focus_mode:
         info = yf.Ticker(symbol).info
         fin_rows = [
             ("Name", info.get("longName", st.session_state.selected_ticker)),
-            ("Sector", info.get("sector", "Index / Commodity")),
+            ("Sector", info.get("sector", "Index / Equity")),
             ("Market Cap", f"{info['marketCap']:,}" if info.get("marketCap") else "N/A"),
             ("Trailing P/E", f"{info['trailingPE']:.2f}" if info.get("trailingPE") else "N/A"),
             ("52W High", f"{info['fiftyTwoWeekHigh']:,.2f}" if info.get("fiftyTwoWeekHigh") else "N/A"),
