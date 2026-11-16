@@ -72,7 +72,7 @@ class DatabaseManager:
             df = pd.read_sql_query(query, conn, parse_dates=['timestamp'], index_col='timestamp')
         return df
 
-# --- 3. UTILITIES & ROBUST DATA FETCHING ---
+# --- 3. UTILITIES & RESILIENT DATA FETCHING ---
 def check_market_live() -> tuple[bool, str]:
     now_ist = datetime.now(pd.Timestamp("Asia/Kolkata").tz)
     if now_ist.weekday() >= 5:
@@ -93,25 +93,17 @@ class DataFetcher:
         if not cached_df.empty and (datetime.now() - cached_df.index[-1]).seconds < 3600:
             return cached_df
 
-        clean_symbol = symbol.replace("^", "").strip()
+        clean_symbol = symbol.strip()
+        if "^" in clean_symbol:
+            clean_symbol = clean_symbol.replace("^", "")
         if "NSE" not in clean_symbol and "BSE" not in clean_symbol and "." not in clean_symbol:
             clean_symbol += ".NS"
 
-        max_retries = 2
         df = pd.DataFrame()
-        for attempt in range(max_retries):
-            try:
-                if tf in ["15m", "30m"]:
-                    df = yf.download(clean_symbol, period="30d", interval=tf, progress=False, auto_adjust=False)
-                elif tf in ["45m", "1h", "2h", "4h"]:
-                    df = yf.download(clean_symbol, period="60d", interval="1h", progress=False, auto_adjust=False)
-                else:
-                    df = yf.download(clean_symbol, period="1y", interval="1d", progress=False, auto_adjust=False)
-                
-                if not df.empty:
-                    break
-            except Exception:
-                continue
+        try:
+            df = yf.download(clean_symbol, period="60d", interval=tf, progress=False, auto_adjust=False)
+        except Exception:
+            pass
 
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -119,7 +111,7 @@ class DataFetcher:
         required_cols = ["Open", "High", "Low", "Close", "Volume"]
         if not df.empty and all(col in df.columns for col in required_cols):
             clean_df = df.dropna().copy()
-            if len(clean_df) > 10:
+            if len(clean_df) > 5:
                 db.save_data(symbol, tf, clean_df)
                 return clean_df
 
@@ -127,15 +119,16 @@ class DataFetcher:
             return cached_df
 
         try:
-            base = 25000.0 if "NSEI" in symbol else (60000.0 if "BANK" in symbol else 1000.0)
-            idx = pd.date_range(end=datetime.now(), periods=100, freq="H")
+            is_bank = "BANK" in symbol
+            base = 50000.0 if is_bank else (25000.0 if "NSE" in symbol else 1000.0)
+            idx = pd.date_range(end=datetime.now(), periods=120, freq="H")
             np.random.seed(42)
             return pd.DataFrame({
-                "Open": base + np.random.normal(0, 2, 100).cumsum(),
-                "High": base + 10 + np.random.normal(0, 2, 100).cumsum(),
-                "Low": base - 10 + np.random.normal(0, 2, 100).cumsum(),
-                "Close": base + np.random.normal(0, 2, 100).cumsum(),
-                "Volume": np.random.randint(50000, 500000, 100)
+                "Open": base + np.random.normal(0, 5, 120).cumsum(),
+                "High": base + 15 + np.random.normal(0, 5, 120).cumsum(),
+                "Low": base - 15 + np.random.normal(0, 5, 120).cumsum(),
+                "Close": base + np.random.normal(0, 5, 120).cumsum(),
+                "Volume": np.random.randint(100000, 1000000, 120)
             }, index=idx)
         except:
             return pd.DataFrame()
@@ -376,12 +369,6 @@ def run_dashboard():
         .dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; animation: blink 1.5s infinite ease-in-out; }
         .dot-green { background-color: #089981; box-shadow: 0 0 10px #089981; }
         .dot-red { background-color: #f23645; box-shadow: 0 0 10px #f23645; }
-        
-        .sig-strong-buy { background-color: #089981; color: white; padding: 4px 10px; border-radius: 4px; font-weight: 700; display: inline-block; }
-        .sig-buy { background-color: rgba(8, 153, 129, 0.2); color: #089981; border: 1px solid #089981; padding: 4px 10px; border-radius: 4px; font-weight: 700; display: inline-block; }
-        .sig-neutral { background-color: rgba(120, 123, 134, 0.2); color: #d1d4dc; border: 1px solid #787b86; padding: 4px 10px; border-radius: 4px; font-weight: 700; display: inline-block; }
-        .sig-sell { background-color: rgba(242, 54, 69, 0.2); color: #f23645; border: 1px solid #f23645; padding: 4px 10px; border-radius: 4px; font-weight: 700; display: inline-block; }
-        .sig-strong-sell { background-color: #f23645; color: white; padding: 4px 10px; border-radius: 4px; font-weight: 700; display: inline-block; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -445,6 +432,7 @@ def run_dashboard():
         </div>
         """, unsafe_allow_html=True)
 
+    # REPLICATING THE REQUESTED METRIC LAYOUT
     c1, c2, c3 = st.columns(3)
     c1.metric("Signal", analysis["signal"])
     c2.metric("Pattern Detected", analysis["pattern"])
