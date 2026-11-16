@@ -25,7 +25,8 @@ default_toggles = {
     "ind_pivots": False
 }
 for k, v in default_toggles.items():
-    if k not in st.session_state: st.session_state[k] = v
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 def toggle_fullscreen(section_key: str):
     st.session_state.fullscreen_section = None if st.session_state.fullscreen_section == section_key else section_key
@@ -58,6 +59,7 @@ st.markdown("""
     .tv-toolbar-label { font-size: 0.78rem; font-weight: 800; color: #475569; text-transform: uppercase; margin-top: 6px; margin-bottom: 4px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
 </style>
 """, unsafe_allow_html=True)
+
 # ---------------------------------------------------------
 # MARKET OVERVIEW CONFIGURATION
 # ---------------------------------------------------------
@@ -183,6 +185,7 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     return 100 - (100 / (1 + rs))
+
 def evaluate_timeframe(df: pd.DataFrame) -> dict:
     if df is None or len(df) < 30: return None
     close, high, low = df["Close"], df["High"], df["Low"]
@@ -380,6 +383,7 @@ def render_matrix_and_chart_section(df_f: pd.DataFrame, df_all: pd.DataFrame, da
         with tf_cols[idx]: st.markdown(f'<div class="tf-card {get_signal_css(s_txt)}"><div class="tf-title">{tm["label"]} ({tk})</div><div>{s_txt}</div></div>', unsafe_allow_html=True)
 
     msig = obj["Master Signal"]
+    banner_labels = {"market_overview": "MARKET OVERVIEW", "screener_table": "SCANNER RESULTS TABLE", "confluence_matrix": "MULTI-TIMEFRAME CONFLUENCE MATRIX & CHART"}
     st.markdown(f'<div class="summary-banner {get_signal_css(msig)}">MASTER SIGNAL: {msig} (Confidence Score: {obj["Score"]:+.1f})</div>', unsafe_allow_html=True)
 
     t1, t2, t3, t4, t5 = st.columns(5)
@@ -468,7 +472,8 @@ df_f = df_all[df_all["Score"] > 0].sort_values(by="Score", ascending=False).head
 
 af_sec = st.session_state.fullscreen_section
 if af_sec is not None:
-    st.markdown(f'<div class="fs-active-banner"><span>FULL SCREEN MODE ACTIVE: {{"market_overview": "MARKET OVERVIEW", "screener_table": "SCANNER RESULTS TABLE", "confluence_matrix": "MULTI-TIMEFRAME CONFLUENCE MATRIX & CHART"}}.get(af_sec, "")</span><span>Click 'Minimize' to restore full dashboard layout</span></div>', unsafe_allow_html=True)
+    banner_label = banner_labels.get(af_sec, "")
+    st.markdown(f'<div class="fs-active-banner"><span>FULL SCREEN MODE ACTIVE: {banner_label}</span><span>Click \'Minimize\' to restore full dashboard layout</span></div>', unsafe_allow_html=True)
     if af_sec=="market_overview": render_market_overview_section(is_fs=True)
     elif af_sec=="screener_table": render_screener_section(df_f, is_fs=True)
     elif af_sec=="confluence_matrix": render_matrix_and_chart_section(df_f, df_all, d_map, prim_tf, is_fs=True)
@@ -485,3 +490,4 @@ else:
         with st.container(border=True): render_screener_section(df_f, is_fs=False)
     with rc:
         with st.container(border=True): render_matrix_and_chart_section(df_f, df_all, d_map, prim_tf, is_fs=False)
+
