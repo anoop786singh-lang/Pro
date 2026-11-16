@@ -188,7 +188,6 @@ def compute_walk_forward_accuracy(df: pd.DataFrame, lookback_bars: int = 90, for
     if df is None or len(df) < lookback_bars + forward_horizon + 50:
         return 68.5
 
-    sub = df.iloc[-(lookback_bars + forward_horizon):-forward_horizon].copy()
     full_close = df["Close"].values
     full_high = df["High"].values
     full_low = df["Low"].values
@@ -380,17 +379,19 @@ def _process_single_ticker(ticker: str, risk_amount: float) -> dict | None:
 
     return {
         "Ticker": ticker,
+        "Accuracy %": res_1d["accuracy"],
         "Stock": ticker.replace(".NS", ""),
         "Price": res_1d["entry"],
         "MTF Confluence": conf,
         "1D Signal": res_1d["signal"],
         "1H Signal": res_1h["signal"],
         "15M Signal": res_15m["signal"],
-        "Accuracy %": res_1d["accuracy"],
         "1D RSI": res_1d["rsi"],
         "Entry": res_1d["entry"],
         "SL": res_1d["sl"],
         "Target 1": res_1d["t1"],
+        "Target 2": res_1d["t2"],
+        "Target 3": res_1d["t3"],
         "Qty": qty,
         "Active Signals": active_str
     }
@@ -437,12 +438,14 @@ def style_matrix(df: pd.DataFrame):
         .map(color_signals, subset=["MTF Confluence", "1D Signal", "1H Signal", "15M Signal"])
         .map(color_accuracy, subset=["Accuracy %"])
         .format({
-            "Price": "₹{:.1f}",
             "Accuracy %": "{:.1f}%",
+            "Price": "₹{:.1f}",
             "1D RSI": "{:.1f}",
             "Entry": "₹{:.1f}",
             "SL": "₹{:.1f}",
-            "Target 1": "₹{:.1f}"
+            "Target 1": "₹{:.1f}",
+            "Target 2": "₹{:.1f}",
+            "Target 3": "₹{:.1f}"
         })
     )
 
@@ -482,8 +485,8 @@ def render_main_dashboard():
     filtered_df = filtered_df.reset_index(drop=True)
 
     display_cols = [
-        "Stock", "Price", "MTF Confluence", "1D Signal", "1H Signal", "15M Signal",
-        "Accuracy %", "1D RSI", "Entry", "SL", "Target 1", "Qty", "Active Signals"
+        "Accuracy %", "Stock", "Price", "MTF Confluence", "1D Signal", "1H Signal", "15M Signal",
+        "1D RSI", "Entry", "SL", "Target 1", "Target 2", "Target 3", "Qty", "Active Signals"
     ]
 
     event = st.dataframe(
@@ -536,6 +539,12 @@ def render_deep_dive(ticker: str):
     cap_allocated = round(qty * active_res["entry"], 1)
     direction = "LONG (BUY)" if "BUY" in active_res["signal"] else ("SHORT (SELL)" if "SELL" in active_res["signal"] else "NEUTRAL / WAIT")
 
+    is_short = "SELL" in active_res["signal"]
+    multiplier = -1.0 if is_short else 1.0
+    p1 = max(0, int(qty * (active_res["t1"] - active_res["entry"]) * multiplier))
+    p2 = max(0, int(qty * (active_res["t2"] - active_res["entry"]) * multiplier))
+    p3 = max(0, int(qty * (active_res["t3"] - active_res["entry"]) * multiplier))
+
     st.subheader(f"Execution Levels & Position Sizing ({active_tf.upper()})")
     ex_cols = st.columns(6)
     ex_cols[0].metric("Direction / Signal", direction)
@@ -544,6 +553,12 @@ def render_deep_dive(ticker: str):
     ex_cols[3].metric("Targets (T1 / T2 / T3)", f"₹{active_res['t1']} / ₹{active_res['t2']} / ₹{active_res['t3']}")
     ex_cols[4].metric("Position Size (Qty)", f"{qty} shares", delta=f"Cap: ₹{cap_allocated:,.0f}")
     ex_cols[5].metric("Walk-Forward Accuracy", f"{active_res['accuracy']}%", delta="90-Bar ATR Backtest")
+
+    st.subheader("Target Profit Projections")
+    prof_cols = st.columns(3)
+    prof_cols[0].metric("Target 1 Profit", f"₹{p1:,}")
+    prof_cols[1].metric("Target 2 Profit", f"₹{p2:,}")
+    prof_cols[2].metric("Target 3 Profit", f"₹{p3:,}")
 
     # Technical Breakdown & Fibonacci Panel
     st.subheader(f"Detected Patterns, Moving Averages & Fibonacci Levels ({active_tf.upper()})")
@@ -646,6 +661,7 @@ def render_deep_dive(ticker: str):
         fig.add_hline(y=active_res["sl"], line_dash="dash", line_color="#ef5350", annotation_text=f"SL {active_res['sl']}", annotation_position="bottom right", row=1, col=1)
         fig.add_hline(y=active_res["t1"], line_dash="dot", line_color="#00b4d8", annotation_text=f"T1 {active_res['t1']}", annotation_position="top right", row=1, col=1)
         fig.add_hline(y=active_res["t2"], line_dash="dot", line_color="#0077b6", annotation_text=f"T2 {active_res['t2']}", annotation_position="top right", row=1, col=1)
+        fig.add_hline(y=active_res["t3"], line_dash="dot", line_color="#023e8a", annotation_text=f"T3 {active_res['t3']}", annotation_position="top right", row=1, col=1)
 
     # Right-side price axis + isolated price zoom enabled (fixedrange=False)
     fig.update_yaxes(side="right", fixedrange=False, title_text="Price (₹)", row=1, col=1)
@@ -683,7 +699,7 @@ def render_deep_dive(ticker: str):
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1)
     )
 
-    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displayModeBar": True})
+    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displayModeBarBtn": True})
 
 # --- ENTRY POINT ---
 if st.session_state.selected_stock:
