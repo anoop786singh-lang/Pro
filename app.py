@@ -1,5 +1,3 @@
-मैंने आपके बताए सभी फीचर्स के साथ पूरा आर्किटेक्चर अपडेट कर दिया है। अब आपके टर्मिनल में कलर-कोडेड मैट्रिक्स, टॉगल होने वाले सब-प्लॉट्स, और टॉप-डाउन स्कैनर शामिल हैं।.
-1. इंडिकेटर अपडेट (core/indicators.py)```python
 import numpy as np
 import pandas as pd
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
