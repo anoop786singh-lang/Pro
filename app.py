@@ -1,19 +1,17 @@
-import sys
-from typing import Dict, List, Optional, Tuple
+मैंने आपके पुराने कोड के लॉजिक और ट्रेडिंगव्यू के डिज़ाइन को मिलाकर एक बेहद उन्नत और मज़बूत कोड तैयार किया है. इसमें इंडेंटेशन की समस्या नहीं आएगी और सभी एडवांस फीचर्स जैसे ड्राइंग टूल्स, बैकटेस्टिंग, और स्कैनर शामिल हैं. इस पूरे कोड को कॉपी करके सेव कर लें:
+import datetime as dt
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
+import yfinance as yf
 
-from core.data_fetcher import fetch_all_timeframes
-from core.signal_engine import compute_master_and_risk, evaluate_timeframe
-from settings import settings
-
-# --- APPLICATION CONFIGURATION ---
+# --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title=settings.PROJECT_NAME,
+    page_title="Market Master Pro | Advanced Terminal",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -22,690 +20,636 @@ st.markdown(
     """
     <style>
         .block-container {
-            padding-top: 1.2rem !important;
-            padding-bottom: 1.5rem !important;
-            padding-left: 1.5rem !important;
-            padding-right: 1.5rem !important;
+            padding-top: 1rem !important;
+            padding-bottom: 1rem !important;
+            padding-left: 1.2rem !important;
+            padding-right: 1.2rem !important;
             max-width: 100% !important;
         }
-        footer {visibility: hidden;}
-        #MainMenu {visibility: hidden;}
-        div[data-testid="stToolbar"] {visibility: hidden;}
-        .stDeployButton {display:none;}
-        div[data-testid="stMetricValue"] {
-            font-size: 1.35rem !important;
-        }
-        div[data-testid="stMetricLabel"] {
-            font-size: 0.8rem !important;
-        }
+        #MainMenu, footer, .stDeployButton {visibility: hidden;}
+        div[data-testid="stMetricValue"] {font-size: 1.3rem !important;}
+        div[data-testid="stMetricLabel"] {font-size: 0.78rem !important;}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+# --- WATCHLIST & SETTINGS ---
+WATCHLIST: List[Dict[str, str]] = [
+    {"label": "NIFTY 50", "symbol": "^NSEI"},
+    {"label": "BANKNIFTY", "symbol": "^NSEBANK"},
+    {"label": "RELIANCE", "symbol": "RELIANCE.NS"},
+    {"label": "HDFCBANK", "symbol": "HDFCBANK.NS"},
+    {"label": "INFY", "symbol": "INFY.NS"},
+    {"label": "TCS", "symbol": "TCS.NS"},
+    {"label": "ABCAPITAL", "symbol": "ABCAPITAL.NS"},
+    {"label": "VEDL", "symbol": "VEDL.NS"},
+    {"label": "SILVER", "symbol": "SI=F"},
+    {"label": "GOLD", "symbol": "GC=F"},
+]
 
-# --- CORE UTILITIES & STYLING ---
-def style_signal_cell(val: str) -> str:
-    """Applies enterprise-grade conditional formatting to signal strings."""
-    v: str = str(val).upper().strip()
+TF_CONFIG: Dict[str, Dict[str, str]] = {
+    "15M": {"period": "15d", "interval": "15m"},
+    "1H": {"period": "60d", "interval": "60m"},
+    "1D": {"period": "2y", "interval": "1d"},
+    "1WK": {"period": "5y", "interval": "1wk"},
+}
+
+
+# --- INDICATOR & PATTERN ENGINE ---
+def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or len(df) < 20:
+        return df
+    out = df.copy()
+    close = out["Close"]
+    high = out["High"]
+    low = out["Low"]
+
+    # SMA & Bollinger Bands (20, 2)
+    out["SMA_20"] = close.rolling(20, min_periods=1).mean()
+    std_20 = close.rolling(20, min_periods=1).std().fillna(0.0)
+    out["BB_UPPER"] = out["SMA_20"] + (2.0 * std_20)
+    out["BB_LOWER"] = out["SMA_20"] - (2.0 * std_20)
+
+    # Wilder's RSI (14)
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    rs = gain / loss.replace(0, 1e-9)
+    out["RSI"] = 100.0 - (100.0 / (1.0 + rs))
+
+    # ATR (14)
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
+    out["ATR"] = tr.rolling(14, min_periods=1).mean()
+
+    return out
+
+
+def detect_candle_pattern(df: pd.DataFrame) -> str:
+    if len(df) < 3:
+        return "None"
+    c0, c1 = df.iloc[-1], df.iloc[-2]
+    body0 = abs(c0["Close"] - c0["Open"])
+    rng0 = max(c0["High"] - c0["Low"], 1e-9)
+    lower_wick = min(c0["Open"], c0["Close"]) - c0["Low"]
+    upper_wick = c0["High"] - max(c0["Open"], c0["Close"])
+
+    if body0 / rng0 < 0.12:
+        return "Doji"
+    if lower_wick > 2 * body0 and upper_wick < body0:
+        return "Hammer / Pin Bar"
+    if upper_wick > 2 * body0 and lower_wick < body0:
+        return "Shooting Star"
+    if (
+        c1["Close"] < c1["Open"]
+        and c0["Close"] > c0["Open"]
+        and c0["Close"] > c1["Open"]
+        and c0["Open"] < c1["Close"]
+    ):
+        return "Bullish Engulfing"
+    if (
+        c1["Close"] > c1["Open"]
+        and c0["Close"] < c0["Open"]
+        and c0["Close"] < c1["Open"]
+        and c0["Open"] > c1["Close"]
+    ):
+        return "Bearish Engulfing"
+    return "Standard Bar"
+
+
+def evaluate_timeframe(df: pd.DataFrame) -> Dict:
+    df_ind = compute_indicators(df)
+    if df_ind.empty or len(df_ind) < 20:
+        return {"signal": "NEUTRAL", "score": 0, "rsi": 50.0, "pattern": "None", "df": df_ind}
+
+    last = df_ind.iloc[-1]
+    close = float(last["Close"])
+    rsi = float(last["RSI"])
+    sma20 = float(last["SMA_20"])
+    bb_up = float(last["BB_UPPER"])
+    bb_low = float(last["BB_LOWER"])
+    pattern = detect_candle_pattern(df_ind)
+
+    score = 0
+    if close > sma20:
+        score += 1
+    else:
+        score -= 1
+
+    if close > bb_up:
+        score += 1
+    elif close < bb_low:
+        score -= 1
+
+    if 55 <= rsi <= 72:
+        score += 2
+    elif rsi > 72:
+        score += 1
+    elif 28 <= rsi <= 45:
+        score -= 2
+    elif rsi < 28:
+        score -= 1
+
+    if pattern in ["Hammer / Pin Bar", "Bullish Engulfing"]:
+        score += 1
+    elif pattern in ["Shooting Star", "Bearish Engulfing"]:
+        score -= 1
+
+    if score >= 3:
+        sig = "STRONG BUY"
+    elif score >= 1:
+        sig = "BUY"
+    elif score <= -3:
+        sig = "STRONG SELL"
+    elif score <= -1:
+        sig = "SELL"
+    else:
+        sig = "NEUTRAL"
+
+    return {
+        "signal": sig,
+        "score": score,
+        "rsi": round(rsi, 2),
+        "pattern": pattern,
+        "df": df_ind,
+    }
+
+
+# --- DATA FETCHING ---
+@st.cache_data(ttl=180, show_spinner=False)
+def fetch_mtf_data(symbol: str) -> Dict[str, pd.DataFrame]:
+    data: Dict[str, pd.DataFrame] = {}
+    for tf, params in TF_CONFIG.items():
+        try:
+            df = yf.download(
+                symbol,
+                period=params["period"],
+                interval=params["interval"],
+                progress=False,
+                auto_adjust=True,
+            )
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna()
+            data[tf] = df
+        except Exception:
+            data[tf] = pd.DataFrame()
+    return data
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_fundamentals(symbol: str) -> Dict[str, str]:
+    try:
+        info = yf.Ticker(symbol).info
+        return {
+            "Name": str(info.get("shortName", symbol)),
+            "Sector": str(info.get("sector", "Index / Commodity")),
+            "Market Cap": f"{info.get('marketCap', 0):,}" if info.get("marketCap") else "N/A",
+            "Trailing P/E": f"{info.get('trailingPE', 0):.2f}" if info.get("trailingPE") else "N/A",
+            "52W High": f"{info.get('fiftyTwoWeekHigh', 0):,.2f}" if info.get("fiftyTwoWeekHigh") else "N/A",
+            "52W Low": f"{info.get('fiftyTwoWeekLow', 0):,.2f}" if info.get("fiftyTwoWeekLow") else "N/A",
+            "50D Avg": f"{info.get('fiftyDayAverage', 0):,.2f}" if info.get("fiftyDayAverage") else "N/A",
+            "200D Avg": f"{info.get('twoHundredDayAverage', 0):,.2f}" if info.get("twoHundredDayAverage") else "N/A",
+        }
+    except Exception:
+        return {"Name": symbol, "Status": "Fundamentals unavailable"}
+
+
+def compute_master_signal(
+    mtf_eval: Dict[str, Dict], active_tf: str, capital: float, risk_pct: float
+) -> Dict:
+    weights = {"1WK": 3, "1D": 3, "1H": 2, "15M": 1}
+    weighted_sum = 0
+    max_possible = 0
+    for tf, w in weights.items():
+        if tf in mtf_eval and not mtf_eval[tf]["df"].empty:
+            weighted_sum += mtf_eval[tf]["score"] * w
+            max_possible += 5 * w
+
+    conf = int(min(98, max(15, (abs(weighted_sum) / max(max_possible, 1)) * 100 + 25)))
+    if weighted_sum >= 12:
+        master_sig = "STRONG BUY"
+    elif weighted_sum >= 4:
+        master_sig = "BUY"
+    elif weighted_sum <= -12:
+        master_sig = "STRONG SELL"
+    elif weighted_sum <= -4:
+        master_sig = "SELL"
+    else:
+        master_sig = "NEUTRAL"
+
+    df_act = mtf_eval[active_tf]["df"]
+    entry = float(df_act["Close"].iloc[-1])
+    atr = float(df_act["ATR"].iloc[-1]) if "ATR" in df_act.columns else entry * 0.015
+
+    if "SELL" in master_sig:
+        sl = entry + (1.5 * atr)
+        t1 = entry - (2.0 * atr)
+        t2 = entry - (3.5 * atr)
+    else:
+        sl = entry - (1.5 * atr)
+        t1 = entry + (2.0 * atr)
+        t2 = entry + (3.5 * atr)
+
+    risk_per_share = max(abs(entry - sl), 1e-6)
+    qty = int((capital * (risk_pct / 100.0)) // risk_per_share)
+
+    return {
+        "signal": master_sig,
+        "confidence": conf,
+        "entry": round(entry, 2),
+        "sl": round(sl, 2),
+        "t1": round(t1, 2),
+        "t2": round(t2, 2),
+        "qty": max(qty, 1),
+    }
+
+
+# --- BACKTESTING SIMULATOR ---
+def run_backtest(
+    df: pd.DataFrame, initial_cap: float, rsi_buy: int, rsi_sell: int
+) -> Tuple[pd.DataFrame, Dict]:
+    if df.empty or len(df) < 30:
+        return pd.DataFrame(), {}
+
+    bt = df.copy().reset_index()
+    capital = initial_cap
+    position = 0
+    entry_price = 0.0
+    trades = []
+    equity_curve = []
+
+    for i in range(20, len(bt)):
+        row = bt.iloc[i]
+        price = float(row["Close"])
+        rsi = float(row["RSI"])
+        sma = float(row["SMA_20"])
+        date_val = row.iloc[0]
+
+        if position == 0 and price > sma and rsi >= rsi_buy and rsi < 75:
+            position = int(capital // price)
+            if position > 0:
+                entry_price = price
+                capital -= position * price
+                trades.append({"Date": date_val, "Type": "BUY", "Price": round(price, 2), "PnL": 0.0})
+        elif position > 0 and (rsi <= rsi_sell or price < sma):
+            pnl = (price - entry_price) * position
+            capital += position * price
+            trades.append({"Date": date_val, "Type": "SELL", "Price": round(price, 2), "PnL": round(pnl, 2)})
+            position = 0
+
+        current_eq = capital + (position * price)
+        equity_curve.append({"Date": date_val, "Equity": current_eq})
+
+    final_eq = equity_curve[-1]["Equity"] if equity_curve else initial_cap
+    closed_trades = [t for t in trades if t["Type"] == "SELL"]
+    wins = [t for t in closed_trades if t["PnL"] > 0]
+    win_rate = (len(wins) / len(closed_trades) * 100) if closed_trades else 0.0
+    net_ret = ((final_eq - initial_cap) / initial_cap) * 100
+
+    summary = {
+        "Final Capital": f"{final_eq:,.2f}",
+        "Net Return %": f"{net_ret:+.2f}%",
+        "Total Trades": len(closed_trades),
+        "Win Rate %": f"{win_rate:.1f}%",
+    }
+    return pd.DataFrame(equity_curve), summary
+
+
+# --- STYLING HELPER ---
+def style_signal(val: str) -> str:
+    v = str(val).upper()
     if v == "STRONG BUY":
-        return "background-color: #006400; color: #ffffff; font-weight: bold;"
-    elif v == "BUY":
-        return "background-color: #198754; color: #ffffff; font-weight: bold;"
-    elif v == "STRONG SELL":
-        return "background-color: #8b0000; color: #ffffff; font-weight: bold;"
-    elif v == "SELL":
-        return "background-color: #dc3545; color: #ffffff; font-weight: bold;"
+        return "background-color: #006400; color: white; font-weight: bold;"
+    if v == "BUY":
+        return "background-color: #198754; color: white; font-weight: bold;"
+    if v == "STRONG SELL":
+        return "background-color: #8b0000; color: white; font-weight: bold;"
+    if v == "SELL":
+        return "background-color: #dc3545; color: white; font-weight: bold;"
     return "background-color: #2b3035; color: #adb5bd;"
 
 
-# --- TECHNICAL ANALYSIS ENGINE ---
-def ensure_bollinger_bands(
-    df: pd.DataFrame, period: int = 20, std_dev: float = 2.0
-) -> pd.DataFrame:
-    """Ensures Bollinger Bands are present in the dataframe using vectorized operations."""
-    out: pd.DataFrame = df.copy()
-    if out.empty or "Close" not in out.columns:
-        return out
-    if not {"BB_UPPER", "BB_MID", "BB_LOWER"}.issubset(out.columns):
-        mid: pd.Series = (
-            out["Close"].rolling(window=period, min_periods=1).mean()
-        )
-        std: pd.Series = (
-            out["Close"].rolling(window=period, min_periods=1).std().fillna(0.0)
-        )
-        out["BB_MID"] = mid
-        out["BB_UPPER"] = mid + (std_dev * std)
-        out["BB_LOWER"] = mid - (std_dev * std)
-    return out
+# --- SESSION STATE ---
+if "symbol" not in st.session_state:
+    st.session_state.symbol = WATCHLIST[0]["symbol"]
+if "tf" not in st.session_state:
+    st.session_state.tf = "1D"
 
+# --- SIDEBAR ---
+st.sidebar.header("Risk & Capital Settings")
+capital = st.sidebar.number_input("Trading Capital", value=100000.0, step=10000.0)
+risk_pct = st.sidebar.slider("Risk per Trade (%)", 0.5, 5.0, 1.5, 0.5)
 
-def ensure_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
-    """Ensures RSI indicator is calculated accurately."""
-    out: pd.DataFrame = df.copy()
-    if out.empty or "Close" not in out.columns:
-        return out
-    if "RSI" not in out.columns or out["RSI"].isna().all():
-        delta: pd.Series = out["Close"].diff()
-        gain: pd.Series = (
-            delta.clip(lower=0).rolling(window=period, min_periods=1).mean()
-        )
-        loss: pd.Series = (-delta.clip(upper=0)).rolling(
-            window=period, min_periods=1
-        ).mean()
-        rs: pd.Series = gain / loss.replace(0, 1e-9)
-        out["RSI"] = 100.0 - (100.0 / (1.0 + rs))
-    return out
-
-
-def evaluate_bb_and_breakout_confluence(
-    df: pd.DataFrame, master_signal: str
-) -> Tuple[bool, str, str]:
-    """Evaluates high-confluence setups combining Bollinger Bands and Price Action."""
-    df_processed = ensure_bollinger_bands(ensure_rsi(df))
-    if df_processed.empty or len(df_processed) < 25:
-        return False, "N/A", "None"
-
-    row: pd.Series = df_processed.iloc[-1]
-    prev: pd.Series = df_processed.iloc[-2]
-    close: float = float(row["Close"])
-    rsi: float = float(row["RSI"])
-    bb_upper: float = float(row["BB_UPPER"])
-    bb_lower: float = float(row["BB_LOWER"])
-    bb_mid: float = float(row["BB_MID"])
-
-    recent_high: float = float(df_processed["High"].iloc[-21:-1].max())
-    recent_low: float = float(df_processed["Low"].iloc[-21:-1].min())
-
-    is_bull: bool = "BUY" in master_signal
-    is_bear: bool = "SELL" in master_signal
-
-    bb_status: str = "Inside Bands"
-    breakout_status: str = "Range"
-    qualified: bool = False
-
-    if is_bull:
-        if (
-            close > bb_upper
-            or (prev["Close"] <= prev["BB_MID"] and close > bb_mid)
-        ):
-            bb_status = (
-                "Upper Band Breakout" if close > bb_upper else "Mid-BB Reclaim"
-            )
-        if close > recent_high:
-            breakout_status = "20-Bar Resistance Breakout"
-        elif close > prev["High"] and row["Close"] > row["Open"]:
-            breakout_status = "Bullish Candle Breakout"
-
-        if (52 <= rsi <= 75) and (
-            bb_status != "Inside Bands" or "Breakout" in breakout_status
-        ):
-            qualified = True
-
-    elif is_bear:
-        if (
-            close < bb_lower
-            or (prev["Close"] >= prev["BB_MID"] and close < bb_mid)
-        ):
-            bb_status = (
-                "Lower Band Breakdown" if close < bb_lower else "Mid-BB Rejection"
-            )
-        if close < recent_low:
-            breakout_status = "20-Bar Support Breakdown"
-        elif close < prev["Low"] and row["Close"] < row["Open"]:
-            breakout_status = "Bearish Candle Breakdown"
-
-        if (25 <= rsi <= 48) and (
-            bb_status != "Inside Bands" or "Breakdown" in breakout_status
-        ):
-            qualified = True
-
-    return qualified, bb_status, breakout_status
-
-
-# --- DATA SCANNING ---
-@st.cache_data(ttl=180, show_spinner=False)
-def run_scanner_universe(exec_tf: str) -> pd.DataFrame:
-    """Scans the core watchlist for optimal setups."""
-    rows: List[Dict] = []
-    for item in settings.CORE_WATCHLIST:
-        sym: str = item["symbol"]
-        raw = fetch_all_timeframes(sym)
-        if not raw or exec_tf not in raw or raw[exec_tf].empty:
-            continue
-
-        mtf_res = {tf: evaluate_timeframe(df) for tf, df in raw.items()}
-        if mtf_res[exec_tf]["price"] == 0:
-            continue
-
-        master = compute_master_and_risk(mtf_res, exec_tf)
-        m_sig: str = master["master_signal"]
-        if m_sig == "NEUTRAL":
-            continue
-
-        exec_df = mtf_res[exec_tf]["df"]
-        qualified, bb_stat, bo_stat = evaluate_bb_and_breakout_confluence(
-            exec_df, m_sig
-        )
-        if not qualified:
-            continue
-
-        top_pat: str = (
-            mtf_res[exec_tf]["patterns"][0]["pattern"]
-            if mtf_res[exec_tf]["patterns"]
-            else "None"
-        )
-
-        display_sym: str = sym.replace(".NS", "")
-        rows.append(
-            {
-                "Stock": display_sym,
-                "LTP": master["entry"],
-                "Master Signal": m_sig,
-                "Conf %": master["confidence_score"],
-                "1WK": mtf_res.get("1WK", {}).get("signal", "NEUTRAL"),
-                "1D": mtf_res.get("1D", {}).get("signal", "NEUTRAL"),
-                "1H": mtf_res.get("1H", {}).get("signal", "NEUTRAL"),
-                "15M": mtf_res.get("15M", {}).get("signal", "NEUTRAL"),
-                "RSI": mtf_res[exec_tf]["rsi"],
-                "BB Status": bb_stat,
-                "Trigger / Pattern": f"{bo_stat} ({top_pat})",
-                "Entry": master["entry"],
-                "SL": master["stop_loss"],
-                "Target 1": master["target_1"],
-            }
-        )
-
-    if not rows:
-        return pd.DataFrame()
-
-    df_scan = pd.DataFrame(rows)
-    return df_scan.sort_values(by="Conf %", ascending=False).reset_index(
-        drop=True
-    )
-
-
-# --- STATE INITIALIZATION ---
-if "active_symbol" not in st.session_state:
-    st.session_state.active_symbol = settings.CORE_WATCHLIST[0]["symbol"]
-if "active_tf" not in st.session_state:
-    st.session_state.active_tf = "1D"
-if "panel_price" not in st.session_state:
-    st.session_state.panel_price = True
-if "panel_volume" not in st.session_state:
-    st.session_state.panel_volume = True
-if "panel_rsi" not in st.session_state:
-    st.session_state.panel_rsi = True
-if "show_bb" not in st.session_state:
-    st.session_state.show_bb = True
-if "show_levels" not in st.session_state:
-    st.session_state.show_levels = True
-
-# --- SIDEBAR CONTROLS ---
-st.sidebar.title(f"{settings.PROJECT_NAME} v{settings.VERSION}")
-capital: float = st.sidebar.number_input(
-    "Trading Capital (INR)", value=settings.INITIAL_CAPITAL
-)
-risk_pct: float = st.sidebar.slider(
-    "Max Risk Per Trade (%)", 0.5, 5.0, settings.MAX_RISK_PER_TRADE_PCT
-)
-
-# --- DATA FETCHING & PROCESSING ---
-raw_data = fetch_all_timeframes(st.session_state.active_symbol)
-if not raw_data or all(df.empty for df in raw_data.values()):
-    st.error(
-        f"Unable to fetch market data for ticker: {st.session_state.active_symbol}"
-    )
+# --- FETCH & EVALUATE ---
+mtf_raw = fetch_mtf_data(st.session_state.symbol)
+if not mtf_raw or mtf_raw[st.session_state.tf].empty:
+    st.error("Market data unavailable for selected symbol.")
     st.stop()
 
-mtf_results = {tf: evaluate_timeframe(df) for tf, df in raw_data.items()}
-master = compute_master_and_risk(
-    mtf_results, st.session_state.active_tf, capital, risk_pct
-)
+mtf_eval = {tf: evaluate_timeframe(df) for tf, df in mtf_raw.items()}
+master = compute_master_signal(mtf_eval, st.session_state.tf, capital, risk_pct)
+active_df = mtf_eval[st.session_state.tf]["df"]
 
-chart_source_df = ensure_bollinger_bands(
-    ensure_rsi(mtf_results[st.session_state.active_tf]["df"])
-)
-
-# --- HEADER METRICS ---
-hdr_c1, hdr_c2, hdr_c3, hdr_c4 = st.columns([2.2, 2.8, 1.8, 2.2])
-
-with hdr_c1:
-    display_watch = {
-        f"{item['label']} ({item['symbol'].replace('.NS', '')})": item["symbol"]
-        for item in settings.CORE_WATCHLIST
-    }
-    sym_values = list(display_watch.values())
-    curr_idx: int = (
-        sym_values.index(st.session_state.active_symbol)
-        if st.session_state.active_symbol in sym_values
-        else 0
-    )
-    selected_label = st.selectbox(
-        "Instrument",
-        options=list(display_watch.keys()),
-        index=curr_idx,
-        label_visibility="collapsed",
-    )
-    if display_watch[selected_label] != st.session_state.active_symbol:
-        st.session_state.active_symbol = display_watch[selected_label]
+# --- TOP BAR (TRADINGVIEW STYLE) ---
+c1, c2, c3, c4 = st.columns([2.2, 2.6, 1.8, 2.4])
+with c1:
+    sym_map = {f"{x['label']} ({x['symbol']})": x["symbol"] for x in WATCHLIST}
+    keys = list(sym_map.keys())
+    vals = list(sym_map.values())
+    idx = vals.index(st.session_state.symbol) if st.session_state.symbol in vals else 0
+    chosen = st.selectbox("Symbol", keys, index=idx, label_visibility="collapsed")
+    if sym_map[chosen] != st.session_state.symbol:
+        st.session_state.symbol = sym_map[chosen]
         st.rerun()
 
-with hdr_c2:
-    tf_keys: List[str] = ["15M", "1H", "1D", "1WK"]
-    available_tfs: List[str] = [
-        tf for tf in tf_keys if tf in settings.TIMEFRAMES
-    ] or list(settings.TIMEFRAMES.keys())
-    tf_cols = st.columns(len(available_tfs))
-    for i, tf in enumerate(available_tfs):
-        btn_type = (
-            "primary" if st.session_state.active_tf == tf else "secondary"
-        )
+with c2:
+    tf_cols = st.columns(len(TF_CONFIG))
+    for i, tf_name in enumerate(TF_CONFIG.keys()):
         if tf_cols[i].button(
-            tf, key=f"top_tf_{tf}", type=btn_type, use_container_width=True
+            tf_name,
+            key=f"tf_{tf_name}",
+            type="primary" if st.session_state.tf == tf_name else "secondary",
+            use_container_width=True,
         ):
-            st.session_state.active_tf = tf
+            st.session_state.tf = tf_name
             st.rerun()
 
-with hdr_c3:
-    latest_close: float = (
-        float(chart_source_df["Close"].iloc[-1])
-        if not chart_source_df.empty
-        else master["entry"]
-    )
-    prev_close: float = (
-        float(chart_source_df["Close"].iloc[-2])
-        if len(chart_source_df) > 1
-        else latest_close
-    )
-    pct_chg: float = (
-        ((latest_close - prev_close) / prev_close * 100.0)
-        if prev_close
-        else 0.0
-    )
+with c3:
+    last_c = float(active_df["Close"].iloc[-1])
+    prev_c = float(active_df["Close"].iloc[-2]) if len(active_df) > 1 else last_c
+    chg = ((last_c - prev_c) / prev_c) * 100
     st.metric(
-        label=f"{st.session_state.active_symbol.replace('.NS', '')} · {st.session_state.active_tf}",
-        value=f"{latest_close:,.2f}",
-        delta=f"{pct_chg:+.2f}%",
+        f"{st.session_state.symbol} · {st.session_state.tf}",
+        f"{last_c:,.2f}",
+        f"{chg:+.2f}%",
     )
 
-with hdr_c4:
+with c4:
     st.metric(
-        label="Signal",
-        value=master["master_signal"],
-        delta=f"{master['confidence_score']}% Conf",
+        f"Master Signal (Qty: {master['qty']})",
+        master["signal"],
+        f"{master['confidence']}% Confidence",
     )
 
-# --- PANEL TOGGLES ---
-tog_c1, tog_c2, tog_c3, tog_c4, tog_c5, _ = st.columns(
-    [1.1, 1.2, 1.2, 1.5, 1.2, 3.8]
+# --- INDICATOR & OVERLAY CONTROLS ---
+t1, t2, t3, t4, t5, t6 = st.columns(6)
+show_bb = t1.toggle("BB (20, 2)", value=True)
+show_vol = t2.toggle("Volume", value=True)
+show_rsi = t3.toggle("RSI (14)", value=True)
+show_levels = t4.toggle("Trade Levels", value=True)
+show_fib = t5.toggle("Auto Fib", value=False)
+candle_count = t6.selectbox("Bars", [60, 120, 200], index=1, label_visibility="collapsed")
+
+# --- INTERACTIVE CHART WITH DRAWING TOOLS ---
+plot_df = active_df.tail(candle_count).copy()
+fmt = "%d %b %H:%M" if st.session_state.tf in ["15M", "1H"] else "%d %b '%y"
+x_idx = plot_df.index.strftime(fmt)
+
+panels = ["price"]
+if show_vol:
+    panels.append("vol")
+if show_rsi:
+    panels.append("rsi")
+
+heights = [0.68, 0.15, 0.17][: len(panels)]
+if len(panels) == 2:
+    heights = [0.78, 0.22]
+elif len(panels) == 1:
+    heights = [1.0]
+
+fig = make_subplots(
+    rows=len(panels),
+    cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.02,
+    row_heights=heights,
 )
-with tog_c1:
-    st.session_state.panel_price = st.toggle(
-        "Price", value=st.session_state.panel_price, key="tog_price"
-    )
-with tog_c2:
-    st.session_state.panel_volume = st.toggle(
-        "Volume", value=st.session_state.panel_volume, key="tog_vol"
-    )
-with tog_c3:
-    st.session_state.panel_rsi = st.toggle(
-        "RSI (14)", value=st.session_state.panel_rsi, key="tog_rsi"
-    )
-with tog_c4:
-    st.session_state.show_bb = st.toggle(
-        "BB (20, 2)", value=st.session_state.show_bb, key="tog_bb"
-    )
-with tog_c5:
-    st.session_state.show_levels = st.toggle(
-        "Levels", value=st.session_state.show_levels, key="tog_lvl"
-    )
 
-active_panels: List[str] = []
-if st.session_state.panel_price:
-    active_panels.append("price")
-if st.session_state.panel_volume:
-    active_panels.append("volume")
-if st.session_state.panel_rsi:
-    active_panels.append("rsi")
+# Price Panel
+fig.add_trace(
+    go.Candlestick(
+        x=x_idx,
+        open=plot_df["Open"],
+        high=plot_df["High"],
+        low=plot_df["Low"],
+        close=plot_df["Close"],
+        increasing_line_color="#089981",
+        decreasing_line_color="#f23645",
+        name="Price",
+        showlegend=False,
+    ),
+    row=1,
+    col=1,
+)
 
-# --- CHART RENDERING ENGINE ---
-if not active_panels:
-    st.warning("All chart panels are disabled. Enable Price, Volume, or RSI above.")
-else:
-    chart_df = chart_source_df.tail(180).copy()
-    fmt_str: str = (
-        "%d %b %H:%M"
-        if st.session_state.active_tf in ["15M", "1H"]
-        else "%d %b '%y"
-    )
-    x_labels = chart_df.index.strftime(fmt_str)
-
-    weight_map = {"price": 0.68, "volume": 0.15, "rsi": 0.17}
-    raw_weights = [weight_map[p] for p in active_panels]
-    total_weight: float = sum(raw_weights)
-    row_heights = [w / total_weight for w in raw_weights]
-    rows_count: int = len(active_panels)
-
-    fig = make_subplots(
-        rows=rows_count,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.025 if rows_count > 1 else 0.0,
-        row_heights=row_heights,
-    )
-
-    for idx, panel in enumerate(active_panels, start=1):
-        if panel == "price":
-            fig.add_trace(
-                go.Candlestick(
-                    x=x_labels,
-                    open=chart_df["Open"],
-                    high=chart_df["High"],
-                    low=chart_df["Low"],
-                    close=chart_df["Close"],
-                    increasing=dict(
-                        line=dict(color="#089981", width=1.2), fillcolor="#089981"
-                    ),
-                    decreasing=dict(
-                        line=dict(color="#f23645", width=1.2), fillcolor="#f23645"
-                    ),
-                    whiskerwidth=0.4,
-                    name="Price",
-                    showlegend=False,
-                ),
-                row=idx,
-                col=1,
-            )
-
-            if st.session_state.show_bb and {
-                "BB_UPPER",
-                "BB_MID",
-                "BB_LOWER",
-            }.issubset(chart_df.columns):
-                fig.add_trace(
-                    go.Scatter(
-                        x=x_labels,
-                        y=chart_df["BB_UPPER"],
-                        line=dict(color="rgba(41, 98, 255, 0.75)", width=1.2),
-                        name="BB Upper",
-                        hoverinfo="y",
-                    ),
-                    row=idx,
-                    col=1,
-                )
-                fig.add_trace(
-                    go.Scatter(
-                        x=x_labels,
-                        y=chart_df["BB_MID"],
-                        line=dict(color="rgba(255, 109, 0, 0.85)", width=1.2),
-                        name="BB Basis",
-                        hoverinfo="y",
-                    ),
-                    row=idx,
-                    col=1,
-                )
-                fig.add_trace(
-                    go.Scatter(
-                        x=x_labels,
-                        y=chart_df["BB_LOWER"],
-                        line=dict(color="rgba(41, 98, 255, 0.75)", width=1.2),
-                        fill="tonexty",
-                        fillcolor="rgba(41, 98, 255, 0.06)",
-                        name="BB Lower",
-                        hoverinfo="y",
-                    ),
-                    row=idx,
-                    col=1,
-                )
-
-            if st.session_state.show_levels:
-                level_specs = [
-                    (
-                        master["target_3"],
-                        "#089981",
-                        "dot",
-                        f"T3 {master['target_3']:,.2f}",
-                    ),
-                    (
-                        master["target_2"],
-                        "#089981",
-                        "dot",
-                        f"T2 {master['target_2']:,.2f}",
-                    ),
-                    (
-                        master["target_1"],
-                        "#089981",
-                        "dash",
-                        f"T1 {master['target_1']:,.2f}",
-                    ),
-                    (
-                        master["entry"],
-                        "#2962ff",
-                        "solid",
-                        f"ENTRY {master['entry']:,.2f}",
-                    ),
-                    (
-                        master["stop_loss"],
-                        "#f23645",
-                        "dash",
-                        f"SL {master['stop_loss']:,.2f}",
-                    ),
-                ]
-                for y_val, l_color, l_dash, l_text in level_specs:
-                    fig.add_hline(
-                        y=y_val,
-                        line_dash=l_dash,
-                        line_width=1.2,
-                        line_color=l_color,
-                        annotation_text=l_text,
-                        annotation_position="top left",
-                        annotation_font=dict(size=10, color=l_color),
-                        row=idx,
-                        col=1,
-                    )
-
-            fig.update_yaxes(
-                side="right",
-                autorange=True,
-                fixedrange=False,
-                showgrid=True,
-                gridcolor="rgba(42, 46, 57, 0.08)",
-                zeroline=False,
-                row=idx,
-                col=1,
-            )
-
-        elif panel == "volume":
-            vol_colors = [
-                "rgba(8, 153, 129, 0.55)" if c >= o else "rgba(242, 54, 69, 0.55)"
-                for c, o in zip(chart_df["Close"], chart_df["Open"])
-            ]
-            fig.add_trace(
-                go.Bar(
-                    x=x_labels,
-                    y=chart_df["Volume"],
-                    marker_color=vol_colors,
-                    name="Volume",
-                    showlegend=False,
-                ),
-                row=idx,
-                col=1,
-            )
-            fig.update_yaxes(
-                side="right",
-                title_text="Vol",
-                fixedrange=False,
-                showgrid=True,
-                gridcolor="rgba(42, 46, 57, 0.08)",
-                row=idx,
-                col=1,
-            )
-
-        elif panel == "rsi":
-            fig.add_trace(
-                go.Scatter(
-                    x=x_labels,
-                    y=chart_df["RSI"],
-                    line=dict(color="#7e57c2", width=1.6),
-                    name="RSI (14)",
-                    showlegend=False,
-                ),
-                row=idx,
-                col=1,
-            )
-            fig.add_hline(
-                y=70,
-                line_dash="dash",
-                line_width=1.0,
-                line_color="rgba(242, 54, 69, 0.55)",
-                row=idx,
-                col=1,
-            )
-            fig.add_hline(
-                y=30,
-                line_dash="dash",
-                line_width=1.0,
-                line_color="rgba(8, 153, 129, 0.55)",
-                row=idx,
-                col=1,
-            )
-            fig.update_yaxes(
-                side="right",
-                title_text="RSI",
-                range=[0, 100],
-                fixedrange=False,
-                showgrid=True,
-                gridcolor="rgba(42, 46, 57, 0.08)",
-                row=idx,
-                col=1,
-            )
-
-    total_bars: int = len(x_labels)
-    initial_visible_bars: int = min(75, total_bars)
-    init_range = [
-        max(0, total_bars - initial_visible_bars) - 0.5,
-        total_bars - 0.5,
-    ]
-
-    fig.update_xaxes(
-        type="category",
-        range=init_range,
-        nticks=10,
-        fixedrange=False,
-        showgrid=True,
-        gridcolor="rgba(42, 46, 57, 0.08)",
-        rangeslider=dict(visible=False),
-    )
-
-    chart_height: int = (
-        680 if rows_count == 1 else (740 if rows_count == 2 else 800)
-    )
-
-    fig.update_layout(
-        height=chart_height,
-        template="plotly_white",
-        paper_bgcolor="#ffffff",
-        plot_bgcolor="#ffffff",
-        dragmode="pan",
-        hovermode="x unified",
-        bargap=0.22,
-        margin=dict(l=12, r=64, t=12, b=28),
-        legend=dict(
-            orientation="h",
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=0.01,
-            bgcolor="rgba(255,255,255,0.75)",
+if show_bb:
+    fig.add_trace(
+        go.Scatter(
+            x=x_idx, y=plot_df["BB_UPPER"], line=dict(color="rgba(41,98,255,0.7)", width=1.1), name="BB Upper"
         ),
-        xaxis=dict(fixedrange=False),
-        yaxis=dict(fixedrange=False),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_idx, y=plot_df["SMA_20"], line=dict(color="rgba(255,109,0,0.85)", width=1.1), name="20 SMA"
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_idx,
+            y=plot_df["BB_LOWER"],
+            line=dict(color="rgba(41,98,255,0.7)", width=1.1),
+            fill="tonexty",
+            fillcolor="rgba(41,98,255,0.05)",
+            name="BB Lower",
+        ),
+        row=1,
+        col=1,
     )
 
-    st.plotly_chart(
-        fig,
-        use_container_width=True,
-        config={
-            "scrollZoom": True,
-            "displayModeBar": True,
-            "displaylogo": False,
-            "doubleClick": "reset",
-            "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
-        },
-    )
+if show_levels:
+    for val, col_hex, dash_st, lbl in [
+        (master["t2"], "#089981", "dot", f"T2 {master['t2']}"),
+        (master["t1"], "#089981", "dash", f"T1 {master['t1']}"),
+        (master["entry"], "#2962ff", "solid", f"ENTRY {master['entry']}"),
+        (master["sl"], "#f23645", "dash", f"SL {master['sl']}"),
+    ]:
+        fig.add_hline(
+            y=val,
+            line_dash=dash_st,
+            line_width=1.1,
+            line_color=col_hex,
+            annotation_text=lbl,
+            annotation_position="top left",
+            row=1,
+            col=1,
+        )
 
-# --- WATCHLIST NAVIGATION ---
-watchlist_items = settings.CORE_WATCHLIST
-wl_cols = st.columns(len(watchlist_items))
-for i, item in enumerate(watchlist_items):
-    sym: str = item["symbol"]
-    disp_name: str = item.get("label", sym.replace(".NS", ""))
-    is_active: bool = sym == st.session_state.active_symbol
+if show_fib:
+    hi_max = float(plot_df["High"].max())
+    lo_min = float(plot_df["Low"].min())
+    diff = hi_max - lo_min
+    for fib_lvl in [0.236, 0.382, 0.5, 0.618]:
+        f_price = hi_max - (diff * fib_lvl)
+        fig.add_hline(
+            y=f_price,
+            line_dash="dot",
+            line_width=0.9,
+            line_color="rgba(128,128,128,0.6)",
+            annotation_text=f"Fib {fib_lvl:.3f} ({f_price:,.1f})",
+            annotation_position="bottom right",
+            row=1,
+            col=1,
+        )
+
+curr_row = 2
+if show_vol:
+    v_cols = [
+        "rgba(8,153,129,0.5)" if c >= o else "rgba(242,54,69,0.5)"
+        for c, o in zip(plot_df["Close"], plot_df["Open"])
+    ]
+    fig.add_trace(
+        go.Bar(x=x_idx, y=plot_df["Volume"], marker_color=v_cols, name="Volume", showlegend=False),
+        row=curr_row,
+        col=1,
+    )
+    fig.update_yaxes(title_text="Vol", side="right", row=curr_row, col=1)
+    curr_row += 1
+
+if show_rsi:
+    fig.add_trace(
+        go.Scatter(x=x_idx, y=plot_df["RSI"], line=dict(color="#7e57c2", width=1.5), name="RSI", showlegend=False),
+        row=curr_row,
+        col=1,
+    )
+    fig.add_hline(y=70, line_dash="dash", line_color="rgba(242,54,69,0.5)", row=curr_row, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="rgba(8,153,129,0.5)", row=curr_row, col=1)
+    fig.update_yaxes(title_text="RSI", range=[0, 100], side="right", row=curr_row, col=1)
+
+fig.update_yaxes(side="right", row=1, col=1)
+fig.update_xaxes(type="category", nticks=10, rangeslider_visible=False)
+fig.update_layout(
+    height=680,
+    template="plotly_white",
+    dragmode="pan",
+    hovermode="x unified",
+    margin=dict(l=10, r=60, t=10, b=25),
+    newshape=dict(line_color="#2962ff", line_width=2),
+)
+
+# Enable TradingView-like interactive drawing tools in modebar
+plotly_config = {
+    "scrollZoom": True,
+    "displayModeBar": True,
+    "displaylogo": False,
+    "modeBarButtonsToAdd": [
+        "drawline",
+        "drawopenpath",
+        "drawrect",
+        "eraseshape",
+    ],
+}
+st.plotly_chart(fig, use_container_width=True, config=plotly_config)
+
+# --- BOTTOM WATCHLIST QUICK SCROLL BAR ---
+wl_cols = st.columns(len(WATCHLIST))
+for i, item in enumerate(WATCHLIST):
     if wl_cols[i].button(
-        disp_name,
-        key=f"wl_btn_{sym}",
-        type="primary" if is_active else "secondary",
+        item["label"],
+        key=f"wl_{item['symbol']}",
+        type="primary" if item["symbol"] == st.session_state.symbol else "secondary",
         use_container_width=True,
     ):
-        st.session_state.active_symbol = sym
+        st.session_state.symbol = item["symbol"]
         st.rerun()
 
 st.divider()
 
-# --- INTELLIGENCE & MATRIX EXPANDERS ---
-with st.expander("Market Intelligence, MTF Matrix & Risk Levels", expanded=False):
-    tab_scan, tab_mtf, tab_risk = st.tabs(
-        ["Confluence Scanner", "MTF Signal Matrix", "Risk & Levels"]
-    )
+# --- ANALYSIS HUB: SCANNER, MTF MATRIX, BACKTESTING & FINANCIALS ---
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["Confluence Scanner", "MTF Signal Matrix", "Backtest Simulator", "Financials & Details"]
+)
 
-    with tab_scan:
-        scanner_df = run_scanner_universe(st.session_state.active_tf)
-        sig_cols: List[str] = ["Master Signal", "1WK", "1D", "1H", "15M"]
-        if scanner_df.empty:
-            st.info(
-                "No high-accuracy confluence candidates found for current"
-                " timeframe."
+with tab1:
+    if st.button("Scan Full Watchlist Now", type="primary"):
+        scan_rows = []
+        for item in WATCHLIST:
+            s_data = fetch_mtf_data(item["symbol"])
+            if not s_data or s_data[st.session_state.tf].empty:
+                continue
+            s_eval = {t: evaluate_timeframe(d) for t, d in s_data.items()}
+            s_master = compute_master_signal(s_eval, st.session_state.tf, capital, risk_pct)
+            scan_rows.append(
+                {
+                    "Stock": item["label"],
+                    "LTP": s_master["entry"],
+                    "Master Signal": s_master["signal"],
+                    "Conf %": s_master["confidence"],
+                    "1WK": s_eval["1WK"]["signal"],
+                    "1D": s_eval["1D"]["signal"],
+                    "1H": s_eval["1H"]["signal"],
+                    "15M": s_eval["15M"]["signal"],
+                    "RSI": s_eval[st.session_state.tf]["rsi"],
+                    "Pattern": s_eval[st.session_state.tf]["pattern"],
+                    "Entry": s_master["entry"],
+                    "SL": s_master["sl"],
+                    "Target 1": s_master["t1"],
+                }
             )
-        else:
+        if scan_rows:
+            df_scan = pd.DataFrame(scan_rows).sort_values("Conf %", ascending=False)
             st.dataframe(
-                scanner_df.style.map(style_signal_cell, subset=sig_cols),
+                df_scan.style.map(
+                    style_signal, subset=["Master Signal", "1WK", "1D", "1H", "15M"]
+                ),
                 use_container_width=True,
                 hide_index=True,
             )
 
-    with tab_mtf:
-        matrix_rows: List[Dict] = []
-        for tf, res in mtf_results.items():
-            pat_name: str = (
-                res["patterns"][0]["pattern"] if res["patterns"] else "-"
-            )
-            matrix_rows.append(
-                {
-                    "Timeframe": tf,
-                    "Signal": res["signal"],
-                    "Confidence": f"{res['confidence']}%",
-                    "Score": res["score"],
-                    "RSI": res["rsi"],
-                    "Pattern": pat_name,
-                }
-            )
-        st.dataframe(
-            pd.DataFrame(matrix_rows).style.map(
-                style_signal_cell, subset=["Signal"]
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
+with tab2:
+    mtf_rows = [
+        {
+            "Timeframe": tf,
+            "Signal": res["signal"],
+            "Score": res["score"],
+            "RSI (14)": res["rsi"],
+            "Candle Pattern": res["pattern"],
+        }
+        for tf, res in mtf_eval.items()
+    ]
+    st.dataframe(
+        pd.DataFrame(mtf_rows).style.map(style_signal, subset=["Signal"]),
+        use_container_width=True,
+        hide_index=True,
+    )
 
-    with tab_risk:
-        levels_df = pd.DataFrame(
-            [
-                {"Level": "Entry Price", "Price": master["entry"]},
-                {"Level": "Stop Loss", "Price": master["stop_loss"]},
-                {"Level": "Target 1", "Price": master["target_1"]},
-                {"Level": "Target 2", "Price": master["target_2"]},
-                {"Level": "Target 3", "Price": master["target_3"]},
-            ]
-        )
-        st.dataframe(levels_df, use_container_width=True, hide_index=True)
+with tab3:
+    b1, b2, b3 = st.columns(3)
+    bt_rsi_buy = b1.slider("Buy Trigger RSI >=", 45, 65, 55)
+    bt_rsi_sell = b2.slider("Exit Trigger RSI <=", 30, 50, 45)
+    bt_cap = b3.number_input("Simulation Capital", value=100000.0, step=10000.0)
+
+    eq_df, bt_stats = run_backtest(active_df, bt_cap, bt_rsi_buy, bt_rsi_sell)
+    if bt_stats:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Final Capital", bt_stats["Final Capital"])
+        m2.metric("Net Return", bt_stats["Net Return %"])
+        m3.metric("Closed Trades", bt_stats["Total Trades"])
+        m4.metric("Win Rate", bt_stats["Win Rate %"])
+        st.line_chart(eq_df.set_index("Date")["Equity"], height=260)
+    else:
+        st.info("Insufficient historical bars to run backtest.")
+
+with tab4:
+    fund_data = fetch_fundamentals(st.session_state.symbol)
+    f_df = pd.DataFrame(list(fund_data.items()), columns=["Metric", "Value"])
+    st.dataframe(f_df, use_container_width=True, hide_index=True)
+
+
