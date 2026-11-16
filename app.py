@@ -42,9 +42,9 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
 # --- CORE UTILITIES & STYLING ---
-
-
 def style_signal_cell(val: str) -> str:
     """Applies enterprise-grade conditional formatting to signal strings."""
     v: str = str(val).upper().strip()
@@ -96,6 +96,8 @@ def ensure_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
         rs: pd.Series = gain / loss.replace(0, 1e-9)
         out["RSI"] = 100.0 - (100.0 / (1.0 + rs))
     return out
+
+
 def evaluate_bb_and_breakout_confluence(
     df: pd.DataFrame, master_signal: str
 ) -> Tuple[bool, str, str]:
@@ -159,6 +161,8 @@ def evaluate_bb_and_breakout_confluence(
             qualified = True
 
     return qualified, bb_status, breakout_status
+
+
 # --- DATA SCANNING ---
 @st.cache_data(ttl=180, show_spinner=False)
 def run_scanner_universe(exec_tf: str) -> pd.DataFrame:
@@ -236,7 +240,8 @@ if "show_bb" not in st.session_state:
     st.session_state.show_bb = True
 if "show_levels" not in st.session_state:
     st.session_state.show_levels = True
-#--- SIDEBAR CONTROLS ---
+
+# --- SIDEBAR CONTROLS ---
 st.sidebar.title(f"{settings.PROJECT_NAME} v{settings.VERSION}")
 capital: float = st.sidebar.number_input(
     "Trading Capital (INR)", value=settings.INITIAL_CAPITAL
@@ -330,6 +335,7 @@ with hdr_c4:
         value=master["master_signal"],
         delta=f"{master['confidence_score']}% Conf",
     )
+
 # --- PANEL TOGGLES ---
 tog_c1, tog_c2, tog_c3, tog_c4, tog_c5, _ = st.columns(
     [1.1, 1.2, 1.2, 1.5, 1.2, 3.8]
@@ -362,6 +368,7 @@ if st.session_state.panel_volume:
     active_panels.append("volume")
 if st.session_state.panel_rsi:
     active_panels.append("rsi")
+
 # --- CHART RENDERING ENGINE ---
 if not active_panels:
     st.warning("All chart panels are disabled. Enable Price, Volume, or RSI above.")
@@ -627,6 +634,7 @@ else:
             "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
         },
     )
+
 # --- WATCHLIST NAVIGATION ---
 watchlist_items = settings.CORE_WATCHLIST
 wl_cols = st.columns(len(watchlist_items))
