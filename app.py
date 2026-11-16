@@ -1,63 +1,3 @@
-import numpy as np
-import pandas as pd
-def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-if df.empty or len(df) < 30:
-return df
-out = df.copy()
-close = out["Close"]
-high = out["High"]
-low = out["Low"]
-out["EMA_20"] = close.ewm(span=20, adjust=False).mean()
-out["EMA_50"] = close.ewm(span=50, adjust=False).mean()
-out["EMA_200"] = close.ewm(span=200, adjust=False).mean()
-bb_mid = close.rolling(window=20).mean()
-bb_std = close.rolling(window=20).std()
-out["BB_MID"] = bb_mid
-out["BB_UPPER"] = bb_mid + (2 * bb_std)
-out["BB_LOWER"] = bb_mid - (2 * bb_std)
-delta = close.diff()
-gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
-loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
-rs = gain / loss.replace(0, np.nan)
-out["RSI"] = 100 - (100 / (1 + rs))
-ema12 = close.ewm(span=12, adjust=False).mean()
-ema26 = close.ewm(span=26, adjust=False).mean()
-out["MACD"] = ema12 - ema26
-out["MACD_SIGNAL"] = out["MACD"].ewm(span=9, adjust=False).mean()
-out["MACD_HIST"] = out["MACD"] - out["MACD_SIGNAL"]
-prev_close = close.shift(1)
-tr = pd.concat(
-[high - low, (high - prev_close).abs(), (low - prev_close).abs()],
-axis=1,
-).max(axis=1)
-out["ATR"] = tr.ewm(alpha=1 / 14, adjust=False).mean()
-up_move = high.diff()
-down_move = -low.diff()
-plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-minus_dm = np.where(
-(down_move > up_move) & (down_move > 0), down_move, 0.0
-)
-atr_smooth = tr.ewm(alpha=1 / 14, adjust=False).mean().replace(0, np.nan)
-plus_di = (
-100
-* pd.Series(plus_dm, index=out.index).ewm(
-alpha=1 / 14, adjust=False
-).mean()
-/ atr_smooth
-)
-minus_di = (
-100
-* pd.Series(minus_dm, index=out.index).ewm(
-alpha=1 / 14, adjust=False
-).mean()
-/ atr_smooth
-)
-dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
-out["ADX"] = dx.ewm(alpha=1 / 14, adjust=False).mean()
-return out
-
-### 2. मुख्य टर्मिनल और स्कैनर (`app.py`)
-```python
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -69,36 +9,13 @@ from settings import settings
 st.set_page_config(page_title=settings.PROJECT_NAME, layout="wide")
 
 NSE_SCANNER_UNIVERSE = [
-    "RELIANCE.NS",
-    "TCS.NS",
-    "HDFCBANK.NS",
-    "ICICIBANK.NS",
-    "INFY.NS",
-    "SBIN.NS",
-    "BHARTIARTL.NS",
-    "ITC.NS",
-    "LT.NS",
-    "KOTAKBANK.NS",
-    "AXISBANK.NS",
-    "HINDUNILVR.NS",
-    "BAJFINANCE.NS",
-    "MARUTI.NS",
-    "SUNPHARMA.NS",
-    "TATAMOTORS.NS",
-    "TITAN.NS",
-    "NTPC.NS",
-    "POWERGRID.NS",
-    "ULTRACEMCO.NS",
-    "ASIANPAINT.NS",
-    "WIPRO.NS",
-    "HCLTECH.NS",
-    "ADANIENT.NS",
-    "ADANIPORTS.NS",
-    "ONGC.NS",
-    "COALINDIA.NS",
-    "JSWSTEEL.NS",
-    "TATASTEEL.NS",
-    "M&M.NS",
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
+    "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS", "KOTAKBANK.NS",
+    "AXISBANK.NS", "HINDUNILVR.NS", "BAJFINANCE.NS", "MARUTI.NS",
+    "SUNPHARMA.NS", "TATAMOTORS.NS", "TITAN.NS", "NTPC.NS",
+    "POWERGRID.NS", "ULTRACEMCO.NS", "ASIANPAINT.NS", "WIPRO.NS",
+    "HCLTECH.NS", "ADANIENT.NS", "ADANIPORTS.NS", "ONGC.NS",
+    "COALINDIA.NS", "JSWSTEEL.NS", "TATASTEEL.NS", "M&M.NS",
 ]
 
 
@@ -115,9 +32,7 @@ def style_signal_cell(val: str) -> str:
     return "background-color: #2b3035; color: #adb5bd;"
 
 
-def evaluate_bb_and_breakout_confluence(
-    df: pd.DataFrame, master_signal: str
-) -> tuple[bool, str, str]:
+def evaluate_bb_and_breakout_confluence(df: pd.DataFrame, master_signal: str) -> tuple[bool, str, str]:
     if df.empty or len(df) < 25 or "BB_UPPER" not in df.columns:
         return False, "N/A", "None"
 
@@ -140,37 +55,25 @@ def evaluate_bb_and_breakout_confluence(
     qualified = False
 
     if is_bull:
-        if close > bb_upper or (
-            prev["Close"] <= prev["BB_MID"] and close > bb_mid
-        ):
-            bb_status = (
-                "Upper Band Breakout" if close > bb_upper else "Mid-BB Reclaim"
-            )
+        if close > bb_upper or (prev["Close"] <= prev["BB_MID"] and close > bb_mid):
+            bb_status = "Upper Band Breakout" if close > bb_upper else "Mid-BB Reclaim"
         if close > recent_high:
             breakout_status = "20-Bar Resistance Breakout"
         elif close > prev["High"] and row["Close"] > row["Open"]:
             breakout_status = "Bullish Candle Breakout"
 
-        if (52 <= rsi <= 75) and (
-            bb_status != "Inside Bands" or "Breakout" in breakout_status
-        ):
+        if (52 <= rsi <= 75) and (bb_status != "Inside Bands" or "Breakout" in breakout_status):
             qualified = True
 
     elif is_bear:
-        if close < bb_lower or (
-            prev["Close"] >= prev["BB_MID"] and close < bb_mid
-        ):
-            bb_status = (
-                "Lower Band Breakdown" if close < bb_lower else "Mid-BB Rejection"
-            )
+        if close < bb_lower or (prev["Close"] >= prev["BB_MID"] and close < bb_mid):
+            bb_status = "Lower Band Breakdown" if close < bb_lower else "Mid-BB Rejection"
         if close < recent_low:
             breakout_status = "20-Bar Support Breakdown"
         elif close < prev["Low"] and row["Close"] < row["Open"]:
             breakout_status = "Bearish Candle Breakdown"
 
-        if (25 <= rsi <= 48) and (
-            bb_status != "Inside Bands" or "Breakdown" in breakout_status
-        ):
+        if (25 <= rsi <= 48) and (bb_status != "Inside Bands" or "Breakdown" in breakout_status):
             qualified = True
 
     return qualified, bb_status, breakout_status
@@ -194,9 +97,7 @@ def run_nse_topdown_scanner(exec_tf: str) -> pd.DataFrame:
             continue
 
         exec_df = mtf_res[exec_tf]["df"]
-        qualified, bb_stat, bo_stat = evaluate_bb_and_breakout_confluence(
-            exec_df, m_sig
-        )
+        qualified, bb_stat, bo_stat = evaluate_bb_and_breakout_confluence(exec_df, m_sig)
         if not qualified:
             continue
 
@@ -229,9 +130,7 @@ def run_nse_topdown_scanner(exec_tf: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     df_scan = pd.DataFrame(rows)
-    return df_scan.sort_values(by="Conf %", ascending=False).reset_index(
-        drop=True
-    )
+    return df_scan.sort_values(by="Conf %", ascending=False).reset_index(drop=True)
 
 
 st.sidebar.title(f"{settings.PROJECT_NAME} v{settings.VERSION}")
@@ -290,36 +189,17 @@ with st.spinner("Scanning NSE universe for RSI + BB + Breakout confluence..."):
 sig_cols = ["Master Signal", "1WK", "1D", "1H", "15M"]
 
 if scanner_df.empty:
-    st.info(
-        "No high-accuracy Buy/Sell confluence candidates found in current"
-        " cycle."
-    )
+    st.info("No high-accuracy Buy/Sell confluence candidates found in current cycle.")
 else:
-    compact_cols = [
-        "Stock",
-        "LTP",
-        "Master Signal",
-        "Conf %",
-        "1D",
-        "1H",
-        "15M",
-        "RSI",
-        "BB Status",
-        "Trigger / Pattern",
-    ]
+    compact_cols = ["Stock", "LTP", "Master Signal", "Conf %", "1D", "1H", "15M", "RSI", "BB Status", "Trigger / Pattern"]
     compact_df = scanner_df[compact_cols].head(5)
     st.dataframe(
-        compact_df.style.map(
-            style_signal_cell, subset=["Master Signal", "1D", "1H", "15M"]
-        ),
+        compact_df.style.map(style_signal_cell, subset=["Master Signal", "1D", "1H", "15M"]),
         use_container_width=True,
         hide_index=True,
     )
 
-    with st.expander(
-        f"Expand Full NSE Scanner Matrix ({len(scanner_df)} Qualified Stocks)",
-        expanded=False,
-    ):
+    with st.expander(f"Expand Full NSE Scanner Matrix ({len(scanner_df)} Qualified Stocks)", expanded=False):
         st.dataframe(
             scanner_df.style.map(style_signal_cell, subset=sig_cols),
             use_container_width=True,
@@ -333,9 +213,7 @@ with col_matrix:
     st.subheader("Multi-Timeframe Signal Matrix")
     matrix_rows = []
     for tf, res in mtf_results.items():
-        pat_name = (
-            res["patterns"][0]["pattern"] if res["patterns"] else "-"
-        )
+        pat_name = res["patterns"][0]["pattern"] if res["patterns"] else "-"
         matrix_rows.append(
             {
                 "Timeframe": tf,
@@ -434,46 +312,11 @@ if show_bb and "BB_UPPER" in chart_df.columns:
     )
 
 if show_levels:
-    fig.add_hline(
-        y=master["entry"],
-        line_dash="solid",
-        line_color="#2196f3",
-        annotation_text="ENTRY",
-        row=1,
-        col=1,
-    )
-    fig.add_hline(
-        y=master["stop_loss"],
-        line_dash="dash",
-        line_color="#ef5350",
-        annotation_text="SL",
-        row=1,
-        col=1,
-    )
-    fig.add_hline(
-        y=master["target_1"],
-        line_dash="dot",
-        line_color="#26a69a",
-        annotation_text="T1",
-        row=1,
-        col=1,
-    )
-    fig.add_hline(
-        y=master["target_2"],
-        line_dash="dot",
-        line_color="#00e676",
-        annotation_text="T2",
-        row=1,
-        col=1,
-    )
-    fig.add_hline(
-        y=master["target_3"],
-        line_dash="dot",
-        line_color="#00c853",
-        annotation_text="T3",
-        row=1,
-        col=1,
-    )
+    fig.add_hline(y=master["entry"], line_dash="solid", line_color="#2196f3", annotation_text="ENTRY", row=1, col=1)
+    fig.add_hline(y=master["stop_loss"], line_dash="dash", line_color="#ef5350", annotation_text="SL", row=1, col=1)
+    fig.add_hline(y=master["target_1"], line_dash="dot", line_color="#26a69a", annotation_text="T1", row=1, col=1)
+    fig.add_hline(y=master["target_2"], line_dash="dot", line_color="#00e676", annotation_text="T2", row=1, col=1)
+    fig.add_hline(y=master["target_3"], line_dash="dot", line_color="#00c853", annotation_text="T3", row=1, col=1)
 
 current_row = 2
 
@@ -507,20 +350,8 @@ if show_rsi:
         row=current_row,
         col=1,
     )
-    fig.add_hline(
-        y=70,
-        line_dash="dash",
-        line_color="rgba(239, 83, 80, 0.6)",
-        row=current_row,
-        col=1,
-    )
-    fig.add_hline(
-        y=30,
-        line_dash="dash",
-        line_color="rgba(38, 166, 154, 0.6)",
-        row=current_row,
-        col=1,
-    )
+    fig.add_hline(y=70, line_dash="dash", line_color="rgba(239, 83, 80, 0.6)", row=current_row, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="rgba(38, 166, 154, 0.6)", row=current_row, col=1)
     fig.update_yaxes(title_text="RSI", range=[0, 100], row=current_row, col=1)
 
 chart_height = 680 if rows_count > 1 else 560
@@ -529,9 +360,6 @@ fig.update_layout(
     xaxis_rangeslider_visible=False,
     template="plotly_dark",
     margin=dict(l=10, r=10, t=25, b=10),
-    legend=dict(
-        orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1
-    ),
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
 )
 st.plotly_chart(fig, use_container_width=True)
-
