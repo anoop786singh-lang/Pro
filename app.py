@@ -1,4 +1,5 @@
 import concurrent.futures
+import gc
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -94,7 +95,8 @@ st.markdown(
         }}
         /* Route touch pinch-zoom & pan gestures directly to Plotly canvas */
         .js-plotly-plot .plotly .nsewdrag,
-        .js-plotly-plot .plotly .drag {{
+        .js-plotly-plot .plotly .drag,
+        .js-plotly-plot .plotly svg {{
             touch-action: none !important;
         }}
     </style>
@@ -134,14 +136,15 @@ TOP_200_SYMBOLS = [
 ]
 TOP_200_UNIVERSE = {sym: f"{sym}.NS" for sym in TOP_200_SYMBOLS[:200]}
 
-# (fetch_interval, fetch_period, resample_rule_or_None)
+# Maximum available Yahoo Finance lookback per interval:
+# (fetch_interval, max_available_period, resample_rule_or_None)
 TIMEFRAME_MAP = {
-    "15M": ("15m", "15d", None),
-    "30M": ("30m", "30d", None),
-    "45M": ("15m", "30d", "45min"),
-    "1H": ("1h", "60d", None),
-    "2H": ("1h", "90d", "2h"),
-    "4H": ("1h", "180d", "4h"),
+    "15M": ("15m", "60d", None),
+    "30M": ("30m", "60d", None),
+    "45M": ("15m", "60d", "45min"),
+    "1H": ("1h", "730d", None),
+    "2H": ("1h", "730d", "2h"),
+    "4H": ("1h", "730d", "4h"),
     "1D": ("1d", "max", None),
     "1WK": ("1wk", "max", None),
     "1MO": ("1mo", "max", None),
@@ -152,39 +155,91 @@ MAX_POSSIBLE_WEIGHTED_SCORE = sum(3 * w for w in TF_WEIGHTS.values())  # 63
 
 
 # -----------------------------------------------------------------------------
-# TECHNICAL INDICATORS, CONFLUENCE & ACCURACY ENGINE
+# DATA SANITIZATION, TECHNICAL INDICATORS & CONFLUENCE ENGINE
 # -----------------------------------------------------------------------------
+def sanitize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    clean = df.copy()
+    if isinstance(clean.columns, pd.MultiIndex):
+        clean.columns = clean.columns.get_level_values(0)
+
+    required_cols = ["Open", "High", "Low", "Close"]
+    if not all(col in clean.columns for col in required_cols):
+        return pd.DataFrame()
+
+    for col in required_cols:
+        clean[col] = pd.to_numeric(clean[col], errors="coerce")
+
+    if "Volume" in clean.columns:
+        clean["Volume"] = pd.to_numeric(clean["Volume"], errors="coerce").fillna(0.0)
+    else:
+        clean["Volume"] = 0.0
+
+    clean = clean.dropna(subset=required_cols)
+    clean = clean[(clean["Close"] > 0) & (clean["High"] > 0) & (clean["Low"] > 0)]
+    clean = clean[~clean.index.duplicated(keep="last")].sort_index()
+    return clean
+
+
 def resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
-    return df.resample(rule).agg(agg).dropna(subset=["Open", "Close"])
+    resampled = df.resample(rule).agg(agg).dropna(subset=["Open", "High", "Low", "Close"])
+    return resampled
+
+
+def downsample_for_rendering(df: pd.DataFrame, max_bars: int = 1200) -> pd.DataFrame:
+    """Caps rendered candles to keep browser WebGL/DOM responsive on 20+ year max history."""
+    if len(df) <= max_bars:
+        return df
+    step = int(np.ceil(len(df) / max_bars))
+    group_id = np.arange(len(df)) // step
+    grouped = df.groupby(group_id).agg(
+        {
+            "Open": "first",
+            "High": "max",
+            "Low": "min",
+            "Close": "last",
+            "Volume": "sum",
+            "SMA20": "last",
+            "SMA50": "last",
+            "BB_Upper": "last",
+            "BB_Lower": "last",
+            "RSI": "last",
+            "ATR": "last",
+        }
+    )
+    first_timestamps = df.index[::step][: len(grouped)]
+    grouped.index = first_timestamps
+    return grouped
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+    df = sanitize_ohlcv(df)
+    if df.empty:
+        return df
 
-    df["SMA20"] = df["Close"].rolling(20).mean()
-    df["SMA50"] = df["Close"].rolling(50).mean()
-    std20 = df["Close"].rolling(20).std()
+    df["SMA20"] = df["Close"].rolling(20, min_periods=1).mean()
+    df["SMA50"] = df["Close"].rolling(50, min_periods=1).mean()
+    std20 = df["Close"].rolling(20, min_periods=2).std().fillna(0.0)
     df["BB_Upper"] = df["SMA20"] + 2 * std20
     df["BB_Lower"] = df["SMA20"] - 2 * std20
 
     delta = df["Close"].diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    gain = delta.clip(lower=0).rolling(14, min_periods=1).mean()
+    loss = (-delta.clip(upper=0)).rolling(14, min_periods=1).mean()
     rs = gain / loss.replace(0, np.nan)
-    df["RSI"] = 100 - (100 / (1 + rs))
+    df["RSI"] = (100 - (100 / (1 + rs))).fillna(50.0)
 
     high_low = df["High"] - df["Low"]
     high_close = (df["High"] - df["Close"].shift()).abs()
     low_close = (df["Low"] - df["Close"].shift()).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df["ATR"] = tr.rolling(14).mean()
+    df["ATR"] = tr.rolling(14, min_periods=1).mean()
 
-    df["Vol_SMA20"] = df["Volume"].rolling(20).mean()
-    df["Res20"] = df["High"].rolling(20).max().shift(1)
-    df["Sup20"] = df["Low"].rolling(20).min().shift(1)
+    df["Vol_SMA20"] = df["Volume"].rolling(20, min_periods=1).mean()
+    df["Res20"] = df["High"].rolling(20, min_periods=1).max().shift(1)
+    df["Sup20"] = df["Low"].rolling(20, min_periods=1).min().shift(1)
     return df
 
 
@@ -207,21 +262,22 @@ def compute_historical_hit_rate(df: pd.DataFrame) -> float:
 
 
 def evaluate_signal(df: pd.DataFrame) -> tuple[str, int, float, float]:
-    if df is None or len(df) < 25:
-        return "NEUTRAL", 0, np.nan, 50.0
+    if df is None or len(df) < 5:
+        return "NEUTRAL", 0, 50.0, 50.0
 
     last = df.iloc[-1]
-    prev = df.iloc[-2]
+    prev = df.iloc[-2] if len(df) > 1 else last
     score = 0
     factors_aligned = 0
     total_factors = 6
 
-    if last["Close"] > last["SMA20"]:
-        score += 1
-        factors_aligned += 1
-    elif last["Close"] < last["SMA20"]:
-        score -= 1
-        factors_aligned += 1
+    if pd.notna(last.get("SMA20")):
+        if last["Close"] > last["SMA20"]:
+            score += 1
+            factors_aligned += 1
+        elif last["Close"] < last["SMA20"]:
+            score -= 1
+            factors_aligned += 1
 
     if pd.notna(last.get("SMA50")):
         if last["Close"] > last["SMA50"] and score > 0:
@@ -229,7 +285,7 @@ def evaluate_signal(df: pd.DataFrame) -> tuple[str, int, float, float]:
         elif last["Close"] < last["SMA50"] and score < 0:
             factors_aligned += 1
 
-    rsi_val = float(last["RSI"]) if pd.notna(last["RSI"]) else 50.0
+    rsi_val = float(last["RSI"]) if pd.notna(last.get("RSI")) else 50.0
     if rsi_val >= 58:
         score += 1
         if score > 0:
@@ -239,12 +295,13 @@ def evaluate_signal(df: pd.DataFrame) -> tuple[str, int, float, float]:
         if score < 0:
             factors_aligned += 1
 
-    if last["Close"] > last["BB_Upper"] or (prev["Close"] < prev["BB_Lower"] and last["Close"] > last["BB_Lower"]):
-        score += 1
-        factors_aligned += 1
-    elif last["Close"] < last["BB_Lower"] or (prev["Close"] > prev["BB_Upper"] and last["Close"] < last["BB_Lower"]):
-        score -= 1
-        factors_aligned += 1
+    if pd.notna(last.get("BB_Upper")) and pd.notna(last.get("BB_Lower")):
+        if last["Close"] > last["BB_Upper"] or (prev["Close"] < prev.get("BB_Lower", prev["Close"]) and last["Close"] > last["BB_Lower"]):
+            score += 1
+            factors_aligned += 1
+        elif last["Close"] < last["BB_Lower"] or (prev["Close"] > prev.get("BB_Upper", prev["Close"]) and last["Close"] < last["BB_Lower"]):
+            score -= 1
+            factors_aligned += 1
 
     if pd.notna(last.get("Vol_SMA20")) and last["Vol_SMA20"] > 0 and last["Volume"] >= last["Vol_SMA20"]:
         factors_aligned += 1
@@ -276,9 +333,14 @@ def evaluate_signal(df: pd.DataFrame) -> tuple[str, int, float, float]:
 
 
 def calculate_trade_levels(df: pd.DataFrame, signal: str) -> dict:
-    last = df.iloc[-1]
+    valid_df = df.dropna(subset=["Close"]) if df is not None else pd.DataFrame()
+    if valid_df.empty:
+        return {"entry": 0.0, "sl": 0.0, "t1": 0.0, "t2": 0.0}
+
+    last = valid_df.iloc[-1]
     entry = float(last["Close"])
-    atr = float(last["ATR"]) if pd.notna(last["ATR"]) and last["ATR"] > 0 else entry * 0.015
+    raw_atr = last.get("ATR", np.nan)
+    atr = float(raw_atr) if pd.notna(raw_atr) and raw_atr > 0 else max(entry * 0.015, 0.05)
 
     if "SELL" in signal:
         sl = round(entry + 1.5 * atr, 2)
@@ -293,23 +355,27 @@ def calculate_trade_levels(df: pd.DataFrame, signal: str) -> dict:
 
 
 # -----------------------------------------------------------------------------
-# BATCHED BULK DOWNLOAD & TOP 200 -> TOP 50 SCANNER ENGINE
+# CRASH-SAFE BATCHED BULK DOWNLOAD & TOP 200 -> TOP 50 SCANNER ENGINE
 # -----------------------------------------------------------------------------
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def bulk_download_universe_tf(tf_label: str) -> dict[str, pd.DataFrame]:
-    interval, period, resample_rule = TIMEFRAME_MAP[tf_label]
-    scan_period = {"15M": "15d", "30M": "30d", "45M": "30d", "1H": "60d", "2H": "60d", "4H": "90d", "1D": "2y", "1WK": "5y", "1MO": "10y"}[tf_label]
+    interval, _, resample_rule = TIMEFRAME_MAP[tf_label]
+    # Bounded scanner lookback keeps RAM usage low across 200 symbols while single-chart fetches full history
+    scan_period = {"15M": "15d", "30M": "30d", "45M": "30d", "1H": "60d", "2H": "60d", "4H": "90d", "1D": "1y", "1WK": "3y", "1MO": "5y"}[tf_label]
     symbols_list = list(TOP_200_UNIVERSE.values())
 
-    raw = yf.download(
-        tickers=symbols_list,
-        interval=interval,
-        period=scan_period,
-        group_by="ticker",
-        threads=True,
-        progress=False,
-        auto_adjust=True,
-    )
+    try:
+        raw = yf.download(
+            tickers=symbols_list,
+            interval=interval,
+            period=scan_period,
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            auto_adjust=True,
+        )
+    except Exception:
+        return {}
 
     result = {}
     if raw is None or raw.empty:
@@ -324,20 +390,26 @@ def bulk_download_universe_tf(tf_label: str) -> dict[str, pd.DataFrame]:
             else:
                 sub = raw.dropna(how="all")
 
-            if sub.empty or len(sub) < 25:
+            sub = sanitize_ohlcv(sub)
+            if sub.empty or len(sub) < 15:
                 continue
             if resample_rule:
                 sub = resample_ohlcv(sub, resample_rule)
-            result[name] = compute_indicators(sub)
+            # Store only tail(120) in scanner cache to minimize server memory footprint
+            result[name] = compute_indicators(sub.tail(150))
         except Exception:
             continue
+
+    del raw
+    gc.collect()
     return result
 
 
-@st.cache_data(ttl=600, show_spinner="Scanning Top 200 NSE stocks across 9 timeframes...")
+@st.cache_data(ttl=900, show_spinner="Scanning Top 200 NSE stocks across 9 timeframes...")
 def scan_top_50_opportunities() -> pd.DataFrame:
     tf_data_map = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    # Max 3 workers avoids Yahoo Finance rate limits and RAM spikes on cloud containers
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(bulk_download_universe_tf, tf): tf for tf in TIMEFRAME_MAP.keys()}
         for fut in concurrent.futures.as_completed(futures):
             tf_name = futures[fut]
@@ -352,7 +424,7 @@ def scan_top_50_opportunities() -> pd.DataFrame:
         weighted_score = 0
         acc_list = []
         daily_df = tf_data_map.get("1D", {}).get(name)
-        daily_rsi = np.nan
+        daily_rsi = 50.0
 
         for tf_label in TIMEFRAME_MAP.keys():
             df = tf_data_map.get(tf_label, {}).get(name)
@@ -360,7 +432,7 @@ def scan_top_50_opportunities() -> pd.DataFrame:
             tf_signals[tf_label] = sig
             weighted_score += sc * TF_WEIGHTS[tf_label]
             acc_list.append(acc)
-            if tf_label == "1D":
+            if tf_label == "1D" and pd.notna(rsi_val):
                 daily_rsi = rsi_val
 
         if daily_df is None or daily_df.empty:
@@ -383,6 +455,8 @@ def scan_top_50_opportunities() -> pd.DataFrame:
         overall_acc = round(float(np.mean(acc_list)), 1) if acc_list else 50.0
         levels = calculate_trade_levels(daily_df, overall)
         ltp = levels["entry"]
+        if ltp <= 0:
+            continue
 
         rows.append(
             {
@@ -425,14 +499,18 @@ def scan_top_50_opportunities() -> pd.DataFrame:
     return top50
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, max_entries=30, show_spinner=False)
 def fetch_ohlcv(symbol: str, tf_label: str) -> pd.DataFrame:
-    interval, period, resample_rule = TIMEFRAME_MAP[tf_label]
-    df = yf.download(symbol, interval=interval, period=period, progress=False, auto_adjust=True)
+    """Fetches entire available historical data for the active stock & timeframe safely."""
+    interval, max_period, resample_rule = TIMEFRAME_MAP[tf_label]
+    try:
+        df = yf.download(symbol, interval=interval, period=max_period, progress=False, auto_adjust=True)
+    except Exception:
+        return pd.DataFrame()
+
+    df = sanitize_ohlcv(df)
     if df.empty:
         return df
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
     if resample_rule:
         df = resample_ohlcv(df, resample_rule)
     return compute_indicators(df)
@@ -476,6 +554,10 @@ def style_matrix(df: pd.DataFrame):
 # -----------------------------------------------------------------------------
 @st.dialog("Top 50 MTF Opportunities (Scanned from Top 200 Stocks)", width="large")
 def open_full_page_matrix(matrix_df: pd.DataFrame):
+    if matrix_df.empty:
+        st.info("No scanner data available right now. Click Rescan in the sidebar.")
+        return
+
     f1, f2, f3 = st.columns([2, 2, 3])
     with f1:
         sig_filter = st.multiselect(
@@ -617,6 +699,8 @@ with sticky_header:
                 value=f"{curr_price:,.2f}",
                 delta=f"{pct_chg:+.2f}%",
             )
+        else:
+            st.metric(label=f"{st.session_state.selected_ticker} ({st.session_state.selected_tf})", value="Loading...")
 
     with nav_sig:
         sig_color = "#198754" if "BUY" in tf_signal else ("#dc3545" if "SELL" in tf_signal else "#6c757d")
@@ -661,13 +745,14 @@ show_vol = t2_col.toggle("Volume", value=True)
 show_rsi = t3_col.toggle("RSI (14)", value=True)
 show_levels = t4_col.toggle("Trade Levels", value=True)
 show_fib = t5_col.toggle("Auto Fib", value=False)
-bars_option = t6_col.selectbox("Bars", ["120", "250", "500", "ALL (Max History)"], index=1, label_visibility="collapsed")
+bars_option = t6_col.selectbox("Bars", ["ALL (Max History)", "120", "250", "500"], index=0, label_visibility="collapsed")
 
 # -----------------------------------------------------------------------------
 # INTERACTIVE CANDLESTICK CHART WITH FLOATING CONTROLS & LIVE BADGE
 # -----------------------------------------------------------------------------
 if not chart_df.empty:
-    plot_df = chart_df.copy() if bars_option.startswith("ALL") else chart_df.tail(int(bars_option)).copy()
+    raw_plot_df = chart_df.copy() if bars_option.startswith("ALL") else chart_df.tail(int(bars_option)).copy()
+    plot_df = downsample_for_rendering(raw_plot_df, max_bars=1200)
     levels = calculate_trade_levels(chart_df, tf_signal)
 
     risk_amount = capital * (risk_pct / 100.0)
@@ -687,7 +772,7 @@ if not chart_df.empty:
     floating_ctrl = st.container()
     with floating_ctrl:
         st.markdown('<div class="chart-overlay-anchor"></div>', unsafe_allow_html=True)
-        ov_sym_col, ov_tf_col, ov_badge_col, _ = st.columns([1.45, 0.85, 1.85, 5.85])
+        ov_sym_col, ov_tf_col, ov_badge_col, _ = st.columns([1.45, 0.85, 2.25, 5.45])
 
         with ov_sym_col:
             ov_selected_stock = st.selectbox(
@@ -716,7 +801,7 @@ if not chart_df.empty:
         with ov_badge_col:
             st.markdown(
                 f'<div class="floating-chart-badge" style="background-color: {badge_bg};">'
-                f"{tf_signal} ({tf_acc}%)"
+                f"{tf_signal} ({tf_acc}%) | {len(chart_df):,} bars"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -737,7 +822,7 @@ if not chart_df.empty:
     )
 
     is_intraday = st.session_state.selected_tf in ["15M", "30M", "45M", "1H", "2H", "4H"]
-    x_labels = plot_df.index.strftime("%d %b %H:%M") if is_intraday else plot_df.index.strftime("%d %b '%y")
+    x_labels = plot_df.index.strftime("%d %b '%y %H:%M") if is_intraday else plot_df.index.strftime("%d %b '%y")
 
     fig.add_trace(
         go.Candlestick(
@@ -794,7 +879,7 @@ if not chart_df.empty:
                 col=1,
             )
 
-    if show_levels:
+    if show_levels and levels["entry"] > 0:
         level_specs = [
             (levels["t2"], f"T2 {levels['t2']:,.2f}", "#2e7d32", "dot"),
             (levels["t1"], f"T1 {levels['t1']:,.2f}", "#089981", "dash"),
@@ -859,6 +944,8 @@ if not chart_df.empty:
             "modeBarButtonsToRemove": ["lasso2d", "select2d"],
         },
     )
+else:
+    st.warning(f"No historical OHLCV data returned for {st.session_state.selected_ticker} ({st.session_state.selected_tf}). Please retry or switch timeframe.")
 
 # -----------------------------------------------------------------------------
 # COLLAPSIBLE EXCEL-LIKE TOP 50 MTF SIGNAL MATRIX & BACKTEST TABS
@@ -935,7 +1022,10 @@ if not st.session_state.focus_mode and not matrix_df.empty:
             st.line_chart(pd.Series(equity, index=bt_df.index, name="Equity Curve"))
 
     with tab_fin:
-        info = yf.Ticker(symbol).info
+        try:
+            info = yf.Ticker(symbol).info or {}
+        except Exception:
+            info = {}
         fin_rows = [
             ("Name", info.get("longName", st.session_state.selected_ticker)),
             ("Sector", info.get("sector", "Index / Equity")),
